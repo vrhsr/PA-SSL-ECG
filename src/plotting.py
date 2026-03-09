@@ -527,3 +527,189 @@ def generate_latex_table(results_df, metrics=('accuracy', 'auroc', 'f1_macro', '
 \\end{{table}}"""
     
     return latex
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. TRAINING CONVERGENCE CURVES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_training_curves(histories, save_path=None):
+    """
+    Plot SSL training loss convergence curves for multiple methods.
+    
+    Args:
+        histories: dict of {method_name: list of {'epoch', 'loss', 'loss_aug', 'loss_temporal'}}
+        save_path: path to save figure
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    
+    curve_colors = {
+        'PA-SSL (PhysioAug + Temporal)': '#2166AC',
+        'PA-SSL + Metadata': '#1A9850',
+        'SimCLR + Naive Aug': '#F4A582',
+        'PhysioAug (no temporal)': '#D6604D',
+    }
+    
+    for method, history in histories.items():
+        epochs = [h['epoch'] for h in history]
+        losses = [h['loss'] for h in history]
+        color = curve_colors.get(method, '#333333')
+        
+        ax1.plot(epochs, losses, label=method, color=color, linewidth=2)
+        
+        # Also plot augmentation component
+        if 'loss_aug' in history[0]:
+            loss_aug = [h['loss_aug'] for h in history]
+            ax2.plot(epochs, loss_aug, label=f"{method} (aug)", 
+                     color=color, linewidth=2, linestyle='-')
+        
+        if 'loss_temporal' in history[0]:
+            loss_temp = [h['loss_temporal'] for h in history]
+            ax2.plot(epochs, loss_temp, label=f"{method} (temp)", 
+                     color=color, linewidth=2, linestyle='--')
+    
+    ax1.set_xlabel("Epoch", fontsize=12)
+    ax1.set_ylabel("Total Loss", fontsize=12)
+    ax1.set_title("Training Convergence", fontsize=14, fontweight='bold')
+    ax1.legend(fontsize=9, framealpha=0.9)
+    
+    ax2.set_xlabel("Epoch", fontsize=12)
+    ax2.set_ylabel("Loss Component", fontsize=12)
+    ax2.set_title("Loss Components (Solid=Aug, Dashed=Temporal)", fontsize=13, fontweight='bold')
+    ax2.legend(fontsize=8, framealpha=0.9, ncol=2)
+    
+    plt.tight_layout()
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path)
+        print(f"Training curves saved: {save_path}")
+    plt.close()
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. AUGMENTATION HERO FIGURE (Figure 1 of Paper)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_augmentation_hero(original_signal, augmented_signals, aug_names,
+                            r_peak_idx=None, save_path=None):
+    """
+    Create the paper's hero figure showing original ECG + all augmentations.
+    
+    Args:
+        original_signal: 1D numpy array (250 samples)
+        augmented_signals: list of 1D numpy arrays
+        aug_names: list of augmentation names
+        r_peak_idx: index of R-peak in original signal (for annotation)
+        save_path: path to save figure
+    """
+    n_augs = len(augmented_signals)
+    n_cols = 4
+    n_rows = (n_augs + 1 + n_cols - 1) // n_cols  # +1 for original
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 3.5 * n_rows))
+    axes = axes.flatten()
+    
+    t = np.arange(len(original_signal)) / 100.0  # assuming 100 Hz -> seconds
+    
+    # Plot original
+    axes[0].plot(t, original_signal, color='#2166AC', linewidth=1.5)
+    axes[0].set_title('Original ECG', fontsize=11, fontweight='bold', color='#2166AC')
+    axes[0].set_ylabel('Amplitude', fontsize=9)
+    if r_peak_idx is not None:
+        axes[0].axvline(x=r_peak_idx / 100.0, color='red', linestyle='--', alpha=0.5, linewidth=1)
+        axes[0].annotate('R-peak', xy=(r_peak_idx / 100.0, original_signal[r_peak_idx]),
+                          fontsize=8, color='red', ha='center', va='bottom')
+    
+    # Plot each augmentation
+    aug_colors = ['#D6604D', '#F4A582', '#92C5DE', '#4393C3', '#1A9850', '#762A83', '#E66101']
+    
+    for i, (aug_signal, aug_name) in enumerate(zip(augmented_signals, aug_names)):
+        ax = axes[i + 1]
+        # Plot original faintly for reference
+        ax.plot(t[:len(original_signal)], original_signal, color='#CCCCCC', 
+                linewidth=0.8, alpha=0.6, label='Original')
+        # Plot augmented
+        color = aug_colors[i % len(aug_colors)]
+        ax.plot(t[:len(aug_signal)], aug_signal, color=color, linewidth=1.3, label='Augmented')
+        ax.set_title(aug_name, fontsize=10, fontweight='bold', color=color)
+        
+        if r_peak_idx is not None and r_peak_idx < len(aug_signal):
+            ax.axvline(x=r_peak_idx / 100.0, color='red', linestyle='--', alpha=0.3, linewidth=0.8)
+    
+    # Hide unused axes
+    for i in range(n_augs + 1, len(axes)):
+        axes[i].set_visible(False)
+    
+    # Common labels
+    for ax in axes:
+        if ax.get_visible():
+            ax.set_xlabel('Time (s)', fontsize=9)
+            ax.tick_params(labelsize=8)
+    
+    fig.suptitle('PA-SSL: Physiology-Aware Augmentation Library',
+                 fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"Augmentation hero figure saved: {save_path}")
+    plt.close()
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. FAIRNESS SUBGROUP COMPARISON
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_fairness_comparison(fairness_results, save_path=None):
+    """
+    Bar chart comparing accuracy across demographic subgroups for multiple methods.
+    
+    Args:
+        fairness_results: dict of {method_name: DataFrame with 'subgroup' and 'accuracy'}
+    """
+    subgroups = ['Overall', 'Male', 'Female', '<40', '40-60', '60+']
+    methods = list(fairness_results.keys())
+    n_methods = len(methods)
+    
+    fig, ax = plt.subplots(figsize=(12, 5))
+    
+    x = np.arange(len(subgroups))
+    width = 0.8 / n_methods
+    
+    method_colors = list(COLORS.values())[:n_methods]
+    
+    for i, method in enumerate(methods):
+        df = fairness_results[method]
+        values = []
+        for sg in subgroups:
+            row = df[df['subgroup'] == sg]
+            values.append(row['accuracy'].values[0] if len(row) > 0 else 0)
+        
+        offset = (i - n_methods / 2 + 0.5) * width
+        bars = ax.bar(x + offset, values, width, label=method,
+                      color=method_colors[i % len(method_colors)],
+                      edgecolor='gray', alpha=0.85)
+        
+        for bar, val in zip(bars, values):
+            if val > 0:
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
+                        f'{val:.2f}', ha='center', va='bottom', fontsize=7)
+    
+    ax.set_xlabel('Demographic Subgroup', fontsize=12)
+    ax.set_ylabel('Accuracy', fontsize=12)
+    ax.set_title('Demographic Fairness Analysis', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(subgroups, fontsize=10)
+    ax.legend(fontsize=9, framealpha=0.9)
+    ax.set_ylim(0.5, 1.0)
+    
+    plt.tight_layout()
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path)
+        print(f"Fairness comparison plot saved: {save_path}")
+    plt.close()
+    return fig

@@ -16,6 +16,7 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
+import numpy as np
 import argparse
 import os
 import time
@@ -48,6 +49,17 @@ def ssl_collate_fn(batch):
 
 def train_ssl(args):
     """Main SSL training loop."""
+    # Set random seed for reproducibility
+    if hasattr(args, 'seed') and args.seed is not None:
+        import random
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        random.seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
+        torch.backends.cudnn.deterministic = True
+        print(f"  Random seed: {args.seed}")
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*60}")
     print(f"PA-SSL Pretraining")
@@ -290,6 +302,10 @@ if __name__ == "__main__":
     parser.add_argument('--amp', action='store_true', default=True,
                         help='Use mixed precision training')
     parser.add_argument('--num_workers', type=int, default=4)
+    
+    # Reproducibility
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for reproducibility')
     
     # Quick test
     parser.add_argument('--quick_test', action='store_true',
