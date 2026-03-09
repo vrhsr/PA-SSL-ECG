@@ -27,6 +27,12 @@ FILTER_HIGH = 40.0      # Bandpass high cutoff (Hz)
 SOURCE_RATE = 500       # PTB-XL native sampling rate (high-res)
 LEAD_IDX = 1            # Lead II index in 12-lead order (I, II, III...)
 DATA_DIR = 'data/ptb-xl-1.0.3'
+# Fallback paths for Kaggle downloads
+DATA_DIR_FALLBACKS = [
+    'data/ptb-xl-1.0.3',
+    'data/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.3',
+    'data/ptbxl',
+]
 OUTPUT_FILE = 'data/ptbxl_processed.csv'
 
 # ─── LABEL MAPPING ───────────────────────────────────────────────────────────
@@ -89,14 +95,28 @@ def z_score_normalize(signal):
 
 def download_ptbxl():
     """Download PTB-XL dataset from PhysioNet."""
+    global DATA_DIR
     url = "https://physionet.org/static/published-projects/ptb-xl/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.3.zip"
     zip_path = os.path.join("data", "ptbxl.zip")
     
     os.makedirs("data", exist_ok=True)
     
-    if os.path.exists(os.path.join(DATA_DIR, 'ptbxl_database.csv')):
-        print("PTB-XL already downloaded.")
-        return
+    # Check all possible locations
+    for candidate in DATA_DIR_FALLBACKS:
+        if os.path.exists(os.path.join(candidate, 'ptbxl_database.csv')):
+            DATA_DIR = candidate
+            print(f"PTB-XL already downloaded. Found at: {DATA_DIR}")
+            return
+    
+    # Also check for nested Kaggle structure (data/ptb-xl-1.0.3/ptb-xl-.../ptbxl_database.csv)
+    for candidate in DATA_DIR_FALLBACKS:
+        if os.path.exists(candidate):
+            for sub in os.listdir(candidate):
+                nested = os.path.join(candidate, sub, 'ptbxl_database.csv')
+                if os.path.exists(nested):
+                    DATA_DIR = os.path.join(candidate, sub)
+                    print(f"PTB-XL found (nested Kaggle structure): {DATA_DIR}")
+                    return
     
     print(f"Downloading PTB-XL from PhysioNet...")
     response = requests.get(url, stream=True)
@@ -121,6 +141,12 @@ def download_ptbxl():
             dst = os.path.join("data", "ptb-xl-1.0.3")
             if not os.path.exists(dst):
                 os.rename(src, dst)
+            break
+    
+    # Re-detect
+    for candidate in DATA_DIR_FALLBACKS:
+        if os.path.exists(os.path.join(candidate, 'ptbxl_database.csv')):
+            DATA_DIR = candidate
             break
     
     os.remove(zip_path)
@@ -186,7 +212,15 @@ def process_ptbxl(output_file=None, label_mode='binary'):
         record_path = os.path.join(DATA_DIR, row.filename_hr)
         try:
             signals, fields = wfdb.rdsamp(record_path)
-        except Exception:
+        except Exception as e:
+            # Log first few errors to help debug
+            if not hasattr(process_ptbxl, '_err_count'):
+                process_ptbxl._err_count = 0
+            process_ptbxl._err_count += 1
+            if process_ptbxl._err_count <= 3:
+                print(f"\n  WARNING: Cannot read {record_path}: {e}")
+            elif process_ptbxl._err_count == 4:
+                print(f"\n  (suppressing further file-read warnings...)")
             continue
         
         # Extract Lead II

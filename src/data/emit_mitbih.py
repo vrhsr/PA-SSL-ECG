@@ -118,6 +118,7 @@ def process_record(record_name):
 
 def process_mitbih(output_file=None):
     """Process all MIT-BIH records into a single CSV."""
+    global DATA_DIR
     if output_file is None:
         output_file = OUTPUT_FILE
     
@@ -126,6 +127,20 @@ def process_mitbih(output_file=None):
         print(f"Downloading MIT-BIH to {DATA_DIR}...")
         os.makedirs(DATA_DIR, exist_ok=True)
         wfdb.dl_database('mitdb', DATA_DIR)
+    
+    # Check for .dat files, also look inside subdirectories (Kaggle nesting)
+    dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.dat')]
+    if len(dat_files) == 0:
+        # Check nested subdirectories  
+        for sub in os.listdir(DATA_DIR):
+            subpath = os.path.join(DATA_DIR, sub)
+            if os.path.isdir(subpath):
+                nested_dats = [f for f in os.listdir(subpath) if f.endswith('.dat')]
+                if len(nested_dats) > 0:
+                    print(f"  Found MIT-BIH data in nested folder: {subpath}")
+                    DATA_DIR = subpath
+                    dat_files = nested_dats
+                    break
     
     records = sorted(list(set(
         f.split('.')[0] for f in os.listdir(DATA_DIR) if f.endswith('.dat')
