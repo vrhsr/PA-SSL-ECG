@@ -1,0 +1,101 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# PA-SSL: Default Pretraining Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+experiment:
+  name: "passl_default"
+  seed: 42
+  output_dir: "experiments"
+
+data:
+  dataset: "ptbxl"                # ptbxl, mitbih, chapman, all
+  data_dir: "data"
+  sample_rate: 100
+  beat_length: 250
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+augmentation:
+  type: "physio"                  # physio, naive, none
+  strength: "medium"              # light, medium, strong
+
+  # Individual augmentation probabilities
+  constrained_time_warp:
+    enabled: true
+    probability: 0.5
+    max_warp: 0.15
+
+  amplitude_perturbation:
+    enabled: true
+    probability: 0.5
+    scale_range: [0.8, 1.2]
+    qrs_protect: true
+
+  baseline_wander:
+    enabled: true
+    probability: 0.4
+    max_amplitude: 0.15
+    max_freq: 0.5
+
+  emg_noise:
+    enabled: true
+    probability: 0.3
+    snr_range: [15, 30]
+
+  heart_rate_resample:
+    enabled: true
+    probability: 0.3
+    rate_factor_range: [0.85, 1.15]
+
+  powerline:
+    enabled: true
+    probability: 0.3
+
+  segment_dropout:
+    enabled: true
+    probability: 0.2
+    max_dropout_frac: 0.08
+
+model:
+  encoder: "resnet1d"             # resnet1d, wavkan
+  repr_dim: 512                   # 512 for resnet1d, 64 for wavkan
+  proj_dim: 128
+
+ssl:
+  temperature: 0.5
+  alpha: 1.0                     # augmentation contrastive weight
+  beta: 0.5                      # temporal contrastive weight
+  use_temporal: true
+  temporal_scales: [1, 2, 3]     # multi-scale temporal positives (±1, ±2, ±3 beats)
+
+training:
+  epochs: 200
+  batch_size: 256
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 20
+  amp: true                      # mixed precision
+  num_workers: 4
+  checkpoint_interval: 20
+
+evaluation:
+  label_fractions: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+  n_seeds: 3
+  fine_tune_epochs: 30
+  fine_tune_lr: 1.0e-4
+
+  # Cross-dataset transfer
+  cross_dataset:
+    train_on: "ptbxl"
+    test_on: ["mitbih", "chapman"]
+
+  # OOD detection
+  ood:
+    in_distribution: "normal"     # train on normal ECGs
+    ood_classes: ["MI", "STTC"]   # detect these as OOD
+
+  # Robustness
+  robustness:
+    noise_levels_snr: [5, 10, 15, 20, 30]
+    motion_artifact_amplitudes: [0.05, 0.1, 0.2, 0.5]
