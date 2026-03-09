@@ -18,6 +18,7 @@ a single beat at 100 Hz sampling rate, centered on the R-peak.
 import numpy as np
 from scipy.signal import resample
 from scipy.interpolate import interp1d
+import pywt
 
 
 # ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -385,5 +386,56 @@ def segment_dropout(signal, r_peak_pos=125, max_dropout_frac=0.08):
             result[i] *= (1 - alpha)
         else:
             result[i] = 0.0
-    
     return result.astype(np.float32)
+
+
+# ─── 8. WAVELET MASKING (FREQUENCY-DOMAIN) ───────────────────────────────────
+
+def wavelet_masking(signal, wavelet='db4', level=None, max_mask_ratio=0.3):
+    """
+    Randomly mask (zero out) high-frequency wavelet coefficients.
+    
+    This operates in the frequency-domain (Next-Gen SSL feature) to force
+    the model to learn frequency-invariant representations. It preserves the
+    approximation coefficients (low frequency) to maintain the overall morphological
+    integrity of the beat, but randomlyDrops detail coefficients.
+    
+    Args:
+        signal: (250,) numpy array
+        wavelet: PyWavelets wavelet name (e.g., 'db4', 'sym8')
+        level: Decomposition level (default max possible)
+        max_mask_ratio: Max fraction of detail coefficients to drop
+    
+    Returns:
+        Signal with masked frequencies (250,)
+    """
+    result = signal.copy()
+    
+    try:
+        # Decompose the signal
+        coeffs = pywt.wavedec(result, wavelet, level=level)
+        
+        # coeffs[0] is the approximation (low freq, preserves shape). DO NOT MASK.
+        # coeffs[1:] are the details (high freq features). We randomly mask these.
+        
+        for i in range(1, len(coeffs)):
+            if np.random.rand() < 0.5:  # 50% chance to mask something in this level
+                n_coeffs = len(coeffs[i])
+                mask_len = int(n_coeffs * np.random.uniform(0.1, max_mask_ratio))
+                if mask_len > 0:
+                    start_idx = np.random.randint(0, max(1, n_coeffs - mask_len))
+                    coeffs[i][start_idx:start_idx + mask_len] = 0.0
+                    
+        # Reconstruct signal
+        reconstructed = pywt.waverec(coeffs, wavelet)
+        
+        # Make sure length matches exactly (waverec can sometimes be off by 1)
+        if len(reconstructed) > len(result):
+            reconstructed = reconstructed[:len(result)]
+        elif len(reconstructed) < len(result):
+            # Pad with last value
+            reconstructed = np.pad(reconstructed, (0, len(result) - len(reconstructed)), 'edge')
+            
+        return reconstructed.astype(np.float32)
+    except Exception:
+        return result.astype(np.float32)

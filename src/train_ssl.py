@@ -36,6 +36,9 @@ def ssl_collate_fn(batch):
     
     result = {'view1': view1, 'view2': view2}
     
+    if 'metadata' in batch[0]:
+        result['metadata'] = torch.stack([item['metadata'] for item in batch])
+    
     if 'temporal_view' in batch[0]:
         result['temporal_view'] = torch.stack([item['temporal_view'] for item in batch])
         result['has_temporal'] = torch.tensor([item['has_temporal'] for item in batch])
@@ -89,7 +92,8 @@ def train_ssl(args):
     )
     
     # ─── Model ────────────────────────────────────────────────────────────
-    encoder = build_encoder(args.encoder, proj_dim=args.proj_dim).to(device)
+    metadata_dim = 4 if args.use_metadata else 0
+    encoder = build_encoder(args.encoder, proj_dim=args.proj_dim, metadata_dim=metadata_dim).to(device)
     
     n_params = sum(p.numel() for p in encoder.parameters())
     print(f"Encoder parameters: {n_params:,}")
@@ -154,6 +158,11 @@ def train_ssl(args):
             
             temporal_view = None
             has_temporal = None
+            metadata = None
+            
+            if 'metadata' in batch and args.use_metadata:
+                metadata = batch['metadata'].to(device)
+                
             if 'temporal_view' in batch:
                 temporal_view = batch['temporal_view'].to(device)
                 has_temporal = batch['has_temporal'].to(device)
@@ -162,9 +171,9 @@ def train_ssl(args):
             
             if args.amp:
                 with autocast():
-                    z1 = encoder(view1, return_projection=True)
-                    z2 = encoder(view2, return_projection=True)
-                    z_temp = encoder(temporal_view, return_projection=True) if temporal_view is not None else None
+                    z1 = encoder(view1, return_projection=True, metadata=metadata)
+                    z2 = encoder(view2, return_projection=True, metadata=metadata)
+                    z_temp = encoder(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
                     
                     loss, loss_aug, loss_temp = criterion(z1, z2, z_temp, has_temporal)
                 
@@ -172,9 +181,9 @@ def train_ssl(args):
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                z1 = encoder(view1, return_projection=True)
-                z2 = encoder(view2, return_projection=True)
-                z_temp = encoder(temporal_view, return_projection=True) if temporal_view is not None else None
+                z1 = encoder(view1, return_projection=True, metadata=metadata)
+                z2 = encoder(view2, return_projection=True, metadata=metadata)
+                z_temp = encoder(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
                 
                 loss, loss_aug, loss_temp = criterion(z1, z2, z_temp, has_temporal)
                 
@@ -263,6 +272,8 @@ if __name__ == "__main__":
                         choices=['light', 'medium', 'strong'])
     parser.add_argument('--use_temporal', action='store_true', default=True)
     parser.add_argument('--no_temporal', dest='use_temporal', action='store_false')
+    parser.add_argument('--use_metadata', action='store_true', default=False,
+                        help='Condition projection head on patient demography (Phase 9)')
     
     # Training
     parser.add_argument('--epochs', type=int, default=100)

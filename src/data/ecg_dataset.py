@@ -47,6 +47,12 @@ class ECGBeatDataset(Dataset):
         self.beat_idxs = df['beat_idx'].values.astype(np.int64) if 'beat_idx' in df.columns else np.arange(len(df))
         self.r_peak_positions = df['r_peak_pos'].values.astype(np.int64) if 'r_peak_pos' in df.columns else np.full(len(df), 125)
         
+        # Conditional Metadata
+        self.age = df['age'].values.astype(np.float32) if 'age' in df.columns else np.full(len(df), 60.0, dtype=np.float32)
+        self.sex = df['sex'].values.astype(np.float32) if 'sex' in df.columns else np.full(len(df), 0.5, dtype=np.float32)
+        self.weight = df['weight'].values.astype(np.float32) if 'weight' in df.columns else np.full(len(df), 70.0, dtype=np.float32)
+        self.height = df['height'].values.astype(np.float32) if 'height' in df.columns else np.full(len(df), 165.0, dtype=np.float32)
+        
         # Label subsampling for label-efficiency experiments
         self.label_mask = np.ones(len(self.X), dtype=bool)
         if label_fraction < 1.0:
@@ -103,7 +109,8 @@ class ECGBeatDataset(Dataset):
         signal = torch.tensor(self.X[idx]).unsqueeze(0)  # (1, 250)
         label = torch.tensor(self.labels[idx])
         r_peak = self.r_peak_positions[idx]
-        return signal, label, r_peak, idx
+        metadata = torch.tensor([self.age[idx], self.sex[idx], self.weight[idx], self.height[idx]])
+        return signal, label, r_peak, idx, metadata
 
 
 class SSLECGDataset(Dataset):
@@ -154,6 +161,16 @@ class SSLECGDataset(Dataset):
             view2 = view2.unsqueeze(0)
         
         result = {'view1': view1, 'view2': view2, 'idx': idx}
+        
+        # Inject metadata
+        if hasattr(self.base, 'age'):
+            metadata = torch.tensor([
+                self.base.age[idx], 
+                self.base.sex[idx], 
+                self.base.weight[idx], 
+                self.base.height[idx]
+            ])
+            result['metadata'] = metadata
         
         # Temporal positive
         if self.use_temporal:

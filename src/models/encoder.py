@@ -21,18 +21,21 @@ import math
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class ProjectionHead(nn.Module):
-    """MLP projection head for SimCLR-style contrastive learning."""
+    """MLP projection head for SimCLR-style contrastive learning, with optional metadata conditioning."""
     
-    def __init__(self, input_dim, hidden_dim=256, output_dim=128):
+    def __init__(self, input_dim, hidden_dim=256, output_dim=128, metadata_dim=0):
         super().__init__()
+        self.metadata_dim = metadata_dim
         self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(input_dim + metadata_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, output_dim),
         )
     
-    def forward(self, x):
+    def forward(self, x, metadata=None):
+        if self.metadata_dim > 0 and metadata is not None:
+            x = torch.cat([x, metadata], dim=1)
         return self.net(x)
 
 
@@ -80,7 +83,7 @@ class ResNet1DEncoder(nn.Module):
     Output dimension: 512
     """
     
-    def __init__(self, in_channels=1, repr_dim=512, proj_dim=128):
+    def __init__(self, in_channels=1, repr_dim=512, proj_dim=128, **kwargs):
         super().__init__()
         
         self.repr_dim = repr_dim
@@ -103,7 +106,7 @@ class ResNet1DEncoder(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         
         # Projection head (for SSL)
-        self.projection_head = ProjectionHead(repr_dim, hidden_dim=256, output_dim=proj_dim)
+        self.projection_head = ProjectionHead(repr_dim, hidden_dim=256, output_dim=proj_dim, metadata_dim=kwargs.get('metadata_dim', 0))
         
         # Classification head (for downstream)
         self.classifier = None  # Set via set_classifier()
@@ -127,7 +130,7 @@ class ResNet1DEncoder(nn.Module):
         x = torch.flatten(x, 1)  # (B, repr_dim)
         return x
     
-    def forward(self, x, return_projection=False):
+    def forward(self, x, return_projection=False, metadata=None):
         """
         Forward pass.
         
@@ -135,11 +138,12 @@ class ResNet1DEncoder(nn.Module):
             x: (B, 1, 250) or (B, 250)
             return_projection: If True, returns projection head output (for SSL)
                              If False, returns representation or classification
+            metadata: Optional (B, metadata_dim) tensor
         """
         h = self.encode(x)
         
         if return_projection:
-            return self.projection_head(h)
+            return self.projection_head(h, metadata)
         
         if self.classifier is not None:
             return self.classifier(h)
@@ -221,7 +225,7 @@ class WavKANEncoder(nn.Module):
     """
     
     def __init__(self, input_dim=250, repr_dim=64, depth=3,
-                 wavelet_type='mexican_hat', proj_dim=128):
+                 wavelet_type='mexican_hat', proj_dim=128, **kwargs):
         super().__init__()
         
         self.repr_dim = repr_dim
@@ -245,7 +249,7 @@ class WavKANEncoder(nn.Module):
         self.norms.append(nn.LayerNorm(repr_dim))
         
         # Projection head (for SSL)
-        self.projection_head = ProjectionHead(repr_dim, hidden_dim=128, output_dim=proj_dim)
+        self.projection_head = ProjectionHead(repr_dim, hidden_dim=128, output_dim=proj_dim, metadata_dim=kwargs.get('metadata_dim', 0))
         
         # Classification head (for downstream)
         self.classifier = None
@@ -267,11 +271,11 @@ class WavKANEncoder(nn.Module):
         
         return features
     
-    def forward(self, x, return_projection=False):
+    def forward(self, x, return_projection=False, metadata=None):
         h = self.encode(x)
         
         if return_projection:
-            return self.projection_head(h)
+            return self.projection_head(h, metadata)
         
         if self.classifier is not None:
             return self.classifier(h)

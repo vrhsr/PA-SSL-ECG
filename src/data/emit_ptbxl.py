@@ -164,11 +164,23 @@ def process_ptbxl(output_file=None, label_mode='binary'):
     all_beat_idxs = []
     all_rpeak_positions = []
     
+    # Metadata for Phase 9 Conditioning
+    all_ages = []
+    all_sexes = []
+    all_weights = []
+    all_heights = []
+    
     for ecg_id, row in tqdm(Y.iterrows(), total=len(Y), desc="Processing PTB-XL"):
         # Get label
         lbl = label_fn(row.scp_codes, agg_df)
         if lbl == -1:
             continue
+            
+        # Extract Metadata
+        age = float(row.age) if pd.notna(row.age) else 60.0 # Mean imputation
+        sex = 1.0 if row.sex == 0 else 0.0 # 0=Male(1), 1=Female(0)
+        weight = float(row.weight) if pd.notna(row.weight) else 70.0 # Mean imputation
+        height = float(row.height) if pd.notna(row.height) else 165.0 # Mean imputation
         
         # Load signal
         record_path = os.path.join(DATA_DIR, row.filename_hr)
@@ -216,6 +228,10 @@ def process_ptbxl(output_file=None, label_mode='binary'):
                 all_record_ids.append(ecg_id)
                 all_beat_idxs.append(beat_idx)
                 all_rpeak_positions.append(r_peak_resampled)
+                all_ages.append(age)
+                all_sexes.append(sex)
+                all_weights.append(weight)
+                all_heights.append(height)
                 
         except Exception:
             continue
@@ -227,6 +243,10 @@ def process_ptbxl(output_file=None, label_mode='binary'):
     df['record_id'] = all_record_ids
     df['beat_idx'] = all_beat_idxs
     df['r_peak_pos'] = all_rpeak_positions
+    df['age'] = all_ages
+    df['sex'] = all_sexes
+    df['weight'] = all_weights
+    df['height'] = all_heights
     
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     df.to_csv(output_file, index=False)

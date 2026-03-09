@@ -18,6 +18,7 @@ from src.augmentations.physio_augmentations import (
     heart_rate_resample,
     powerline_interference,
     segment_dropout,
+    wavelet_masking,
 )
 
 
@@ -85,6 +86,7 @@ class PhysioAugPipeline:
             (heart_rate_resample, {'rate_factor_range': cfg['hr_range']}, cfg['hr_p']),
             (powerline_interference, {}, cfg['pl_p']),
             (segment_dropout, {}, cfg['drop_p']),
+            (wavelet_masking, {'max_mask_ratio': 0.3}, cfg['drop_p']), # Tied to drop probability
         ]
         
         return cls(augmentations)
