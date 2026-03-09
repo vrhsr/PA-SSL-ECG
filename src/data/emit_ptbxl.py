@@ -9,9 +9,14 @@ Adapted from WavKAN-CL project with enhancements:
 """
 
 import wfdb
+try:
+    import wfdb.processing
+    HAS_WFDB_PROCESSING = True
+except ImportError:
+    HAS_WFDB_PROCESSING = False
 import numpy as np
 import pandas as pd
-from scipy.signal import resample, butter, filtfilt
+from scipy.signal import resample, butter, filtfilt, find_peaks
 import ast
 from tqdm import tqdm
 import os
@@ -90,6 +95,20 @@ def z_score_normalize(signal):
     if std < 1e-6:
         return np.zeros_like(signal)
     return (signal - mean) / std
+
+# ─── R-PEAK DETECTION (with fallback) ────────────────────────────────────────
+
+def detect_r_peaks(signal, fs):
+    """Detect R-peaks using wfdb.processing or scipy fallback."""
+    if HAS_WFDB_PROCESSING:
+        return wfdb.processing.gqrs_detect(signal, fs=fs)
+    else:
+        # Scipy fallback: find_peaks with height and distance constraints
+        height = np.mean(signal) + 0.5 * np.std(signal)
+        distance = int(0.4 * fs)  # minimum 400ms between peaks
+        peaks, _ = find_peaks(signal, height=height, distance=distance)
+        return peaks
+
 
 # ─── DOWNLOAD ─────────────────────────────────────────────────────────────────
 
@@ -231,7 +250,7 @@ def process_ptbxl(output_file=None, label_mode='binary'):
             signal = bandpass_filter(signal, FILTER_LOW, FILTER_HIGH, SOURCE_RATE)
             
             # R-peak detection
-            qrs_inds = wfdb.processing.gqrs_detect(signal, fs=SOURCE_RATE)
+            qrs_inds = detect_r_peaks(signal, fs=SOURCE_RATE)
             
             # Segment beats
             for beat_idx, r_peak in enumerate(qrs_inds):

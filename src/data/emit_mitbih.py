@@ -9,9 +9,14 @@ Adapted from WavKAN-CL with enhancements:
 """
 
 import wfdb
+try:
+    import wfdb.processing
+    HAS_WFDB_PROCESSING = True
+except ImportError:
+    HAS_WFDB_PROCESSING = False
 import numpy as np
 import pandas as pd
-from scipy.signal import resample, butter, filtfilt
+from scipy.signal import resample, butter, filtfilt, find_peaks
 from tqdm import tqdm
 import os
 
@@ -54,6 +59,19 @@ def z_score_normalize(signal):
     if std < 1e-6:
         return np.zeros_like(signal)
     return (signal - mean) / std
+
+# ─── R-PEAK DETECTION (with fallback) ────────────────────────────────────────
+
+def detect_r_peaks(signal, fs):
+    """Detect R-peaks using wfdb.processing or scipy fallback."""
+    if HAS_WFDB_PROCESSING:
+        return wfdb.processing.gqrs_detect(signal, fs=fs)
+    else:
+        height = np.mean(signal) + 0.5 * np.std(signal)
+        distance = int(0.4 * fs)
+        peaks, _ = find_peaks(signal, height=height, distance=distance)
+        return peaks
+
 
 # ─── RECORD PROCESSING ───────────────────────────────────────────────────────
 
