@@ -49,7 +49,8 @@ def extract_representations(encoder, dataset, device, batch_size=256):
     all_reprs = []
     all_labels = []
     
-    for signals, labels, r_peaks, idxs in loader:
+    for batch in loader:
+        signals, labels = batch[0], batch[1]
         signals = signals.to(device)
         reprs = encoder.encode(signals)
         all_reprs.append(reprs.cpu().numpy())
@@ -113,7 +114,8 @@ def fine_tune(encoder, train_dataset, test_dataset, device,
     # Train
     for epoch in range(epochs):
         model.train()
-        for signals, labels, _, _ in train_loader:
+        for batch in train_loader:
+            signals, labels = batch[0], batch[1]
             signals, labels = signals.to(device), labels.to(device)
             optimizer.zero_grad()
             logits = model(signals)
@@ -128,7 +130,8 @@ def fine_tune(encoder, train_dataset, test_dataset, device,
     all_probs = []
     
     with torch.no_grad():
-        for signals, labels, _, _ in test_loader:
+        for batch in test_loader:
+            signals, labels = batch[0], batch[1]
             signals = signals.to(device)
             logits = model(signals)
             probs = torch.softmax(logits, dim=1)

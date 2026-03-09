@@ -107,6 +107,10 @@ def robustness_experiment(encoder, test_csv, device,
         noisy_dataset.label_mask = dataset.label_mask
         noisy_dataset.signal_cols = dataset.signal_cols
         noisy_dataset.temporal_index = dataset.temporal_index
+        noisy_dataset.age = dataset.age
+        noisy_dataset.sex = dataset.sex
+        noisy_dataset.weight = dataset.weight
+        noisy_dataset.height = dataset.height
         
         noisy_reprs, noisy_labels = extract_representations(encoder, noisy_dataset, device)
         noisy_acc = accuracy_score(noisy_labels[n//2:], clf.predict(noisy_reprs[n//2:]))
@@ -133,6 +137,10 @@ def robustness_experiment(encoder, test_csv, device,
         noisy_dataset.label_mask = dataset.label_mask
         noisy_dataset.signal_cols = dataset.signal_cols
         noisy_dataset.temporal_index = dataset.temporal_index
+        noisy_dataset.age = dataset.age
+        noisy_dataset.sex = dataset.sex
+        noisy_dataset.weight = dataset.weight
+        noisy_dataset.height = dataset.height
         
         noisy_reprs, noisy_labels = extract_representations(encoder, noisy_dataset, device)
         noisy_acc = accuracy_score(noisy_labels[n//2:], clf.predict(noisy_reprs[n//2:]))
@@ -179,6 +187,10 @@ def ood_detection_experiment(encoder, in_dist_csv, ood_csv, device):
     in_dist_dataset_filtered.label_mask = in_dist_dataset.label_mask[normal_mask]
     in_dist_dataset_filtered.signal_cols = in_dist_dataset.signal_cols
     in_dist_dataset_filtered.temporal_index = {}
+    in_dist_dataset_filtered.age = in_dist_dataset.age[normal_mask]
+    in_dist_dataset_filtered.sex = in_dist_dataset.sex[normal_mask]
+    in_dist_dataset_filtered.weight = in_dist_dataset.weight[normal_mask]
+    in_dist_dataset_filtered.height = in_dist_dataset.height[normal_mask]
     
     # Extract representations
     in_reprs, in_labels = extract_representations(encoder, in_dist_dataset_filtered, device)
