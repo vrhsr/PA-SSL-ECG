@@ -5,7 +5,8 @@ Write-Host "================================================================"
 Write-Host "PA-SSL: Top-Tier Automated Research Pipeline"
 Write-Host "================================================================"
 
-# ─── Step 0: Dependencies ──────────────────────────────────────────────────
+# ─── Step 0: Set Python Path & Dependencies ────────────────────────────────
+$env:PYTHONPATH = "$PWD"
 Write-Host "`n[0/5] Installing Dependencies..."
 pip install -r requirements.txt
 
