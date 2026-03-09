@@ -41,5 +41,9 @@ env/
 .DS_Store
 
 # Project specific
-data/
-experiments/
+data/*
+!data/.gitkeep
+
+experiments/*
+!experiments/run_all.ps1
+!experiments/.gitkeep
