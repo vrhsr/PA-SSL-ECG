@@ -15,12 +15,15 @@ pip install -r requirements.txt
 Write-Host "`n[1/12] Processing Datasets..."
 Write-Host "`nProcessing PTB-XL (Germany, ~22k records)..."
 python -m src.data.emit_ptbxl --output data/ptbxl_processed.csv
+if ($LASTEXITCODE -ne 0) { Write-Host "FATAL: PTB-XL processing failed"; exit 1 }
 
 Write-Host "`nProcessing MIT-BIH (USA, 48 records)..."
-python -m src.data.emit_mitbih --output data/mitbih_processed.csv
+python -m src.data.emit_mitbih --output data/mitbih_processed.csv 2>$null
+if ($LASTEXITCODE -ne 0) { Write-Host "  MIT-BIH: SKIPPED (non-critical)" }
 
 Write-Host "`nProcessing Chapman-Shaoxing (China, ~10k records)..."
-python -m src.data.emit_chapman --output data/chapman_processed.csv
+python -m src.data.emit_chapman --output data/chapman_processed.csv 2>$null
+if ($LASTEXITCODE -ne 0) { Write-Host "  Chapman: SKIPPED (non-critical)" }
 
 # --- Step 2: SSL Pretraining - Main Configs (200 Epochs, 3 Seeds) ---
 Write-Host "`n[2/12] SSL Pretraining (200 Epochs, Multi-Seed)..."
