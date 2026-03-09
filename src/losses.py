@@ -43,7 +43,7 @@ class NTXentLoss(nn.Module):
         
         # Mask out self-similarity
         mask = torch.eye(N, dtype=torch.bool, device=device)
-        sim_matrix.masked_fill_(mask, -1e9)
+        sim_matrix.masked_fill_(mask, -1e4)  # Use -1e4 (not -1e9) for AMP float16 compatibility
         
         # Positive pairs: (i, i+B) and (i+B, i)
         targets = torch.cat([
