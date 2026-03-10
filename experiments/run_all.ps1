@@ -14,40 +14,72 @@ pip install -r requirements.txt
 # --- Step 1: Data Processing (3 Datasets, 3 Continents) ---
 Write-Host "`n[1/12] Processing Datasets..."
 Write-Host "`nProcessing PTB-XL (Germany, ~22k records)..."
-python -m src.data.emit_ptbxl --output data/ptbxl_processed.csv
-if ($LASTEXITCODE -ne 0) { Write-Host "FATAL: PTB-XL processing failed"; exit 1 }
+if (Test-Path "data/ptbxl_processed.csv") {
+    Write-Host "  PTB-XL already processed. Skipping."
+} else {
+    python -m src.data.emit_ptbxl --output data/ptbxl_processed.csv
+    if ($LASTEXITCODE -ne 0) { Write-Host "FATAL: PTB-XL processing failed"; exit 1 }
+}
 
 Write-Host "`nProcessing MIT-BIH (USA, 48 records)..."
-python -m src.data.emit_mitbih --output data/mitbih_processed.csv 2>$null
-if ($LASTEXITCODE -ne 0) { Write-Host "  MIT-BIH: SKIPPED (non-critical)" }
+if (Test-Path "data/mitbih_processed.csv") {
+    Write-Host "  MIT-BIH already processed. Skipping."
+} else {
+    python -m src.data.emit_mitbih --output data/mitbih_processed.csv 2>$null
+    if ($LASTEXITCODE -ne 0) { Write-Host "  MIT-BIH: SKIPPED (non-critical)" }
+}
 
 Write-Host "`nProcessing Chapman-Shaoxing (China, ~10k records)..."
-python -m src.data.emit_chapman --output data/chapman_processed.csv 2>$null
-if ($LASTEXITCODE -ne 0) { Write-Host "  Chapman: SKIPPED (non-critical)" }
+if (Test-Path "data/chapman_processed.csv") {
+    Write-Host "  Chapman already processed. Skipping."
+} else {
+    python -m src.data.emit_chapman --output data/chapman_processed.csv 2>$null
+    if ($LASTEXITCODE -ne 0) { Write-Host "  Chapman: SKIPPED (non-critical)" }
+}
 
 # --- Step 2: SSL Pretraining - Main Configs (200 Epochs, 3 Seeds) ---
 Write-Host "`n[2/12] SSL Pretraining (200 Epochs, Multi-Seed)..."
 
 foreach ($seed in @(42, 123, 456)) {
     Write-Host "`nTraining: ResNet1D + PhysioAug + Temporal (seed=$seed)"
-    python -m src.train_ssl --encoder resnet1d --augmentation physio --use_temporal --epochs 200 --batch_size 256 --seed $seed --output_dir "experiments/ssl_resnet1d_physio_temporal_s$seed"
+    if (Test-Path "experiments/ssl_resnet1d_physio_temporal_s$seed/best_checkpoint.pth") {
+        Write-Host "  Already trained. Skipping."
+    } else {
+        python -m src.train_ssl --encoder resnet1d --augmentation physio --use_temporal --epochs 200 --batch_size 256 --seed $seed --output_dir "experiments/ssl_resnet1d_physio_temporal_s$seed"
+    }
 
     Write-Host "`nTraining: WavKAN + PhysioAug + Temporal (seed=$seed)"
-    python -m src.train_ssl --encoder wavkan --augmentation physio --use_temporal --epochs 200 --batch_size 256 --seed $seed --output_dir "experiments/ssl_wavkan_physio_temporal_s$seed"
+    if (Test-Path "experiments/ssl_wavkan_physio_temporal_s$seed/best_checkpoint.pth") {
+        Write-Host "  Already trained. Skipping."
+    } else {
+        python -m src.train_ssl --encoder wavkan --augmentation physio --use_temporal --epochs 200 --batch_size 256 --seed $seed --output_dir "experiments/ssl_wavkan_physio_temporal_s$seed"
+    }
 }
 
 # --- Step 3: SSL Pretraining - Ablations (100 Epochs, seed=42) ---
 Write-Host "`n[3/12] SSL Pretraining Ablations (100 Epochs)..."
 
 Write-Host "`nTraining: ResNet1D + NaiveAug (ablation)"
-python -m src.train_ssl --encoder resnet1d --augmentation naive --no_temporal --epochs 100 --batch_size 256 --seed 42
+if (Test-Path "experiments/ssl_resnet1d_naive/best_checkpoint.pth") {
+    Write-Host "  Already trained. Skipping."
+} else {
+    python -m src.train_ssl --encoder resnet1d --augmentation naive --no_temporal --epochs 100 --batch_size 256 --seed 42 --output_dir "experiments/ssl_resnet1d_naive"
+}
 
 Write-Host "`nTraining: ResNet1D + PhysioAug, no temporal (ablation)"
-python -m src.train_ssl --encoder resnet1d --augmentation physio --no_temporal --epochs 100 --batch_size 256 --seed 42
+if (Test-Path "experiments/ssl_resnet1d_physio/best_checkpoint.pth") {
+    Write-Host "  Already trained. Skipping."
+} else {
+    python -m src.train_ssl --encoder resnet1d --augmentation physio --no_temporal --epochs 100 --batch_size 256 --seed 42 --output_dir "experiments/ssl_resnet1d_physio"
+}
 
 # --- Step 4: Metadata-Conditioned Training (200 Epochs) ---
-Write-Host "`n[4/12] Metadata-Conditioned SSL (200 Epochs)..."
-python -m src.train_ssl --encoder resnet1d --augmentation physio --use_temporal --use_metadata --epochs 200 --batch_size 256 --seed 42 --output_dir experiments
+Write-Host "`n[4/12] Metadata-Conditioned Training (200 Epochs)..."
+if (Test-Path "experiments/ssl_resnet1d_metadata/best_checkpoint.pth") {
+    Write-Host "  Already trained. Skipping."
+} else {
+    python -m src.train_ssl --encoder resnet1d --augmentation metadata --use_temporal --epochs 200 --batch_size 256 --seed 42 --output_dir "experiments/ssl_resnet1d_metadata"
+}
 
 # --- Step 5: Training Convergence Curves (P4) ---
 Write-Host "`n[5/12] Generating Training Convergence Curves..."
