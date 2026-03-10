@@ -93,6 +93,10 @@ def train_ssl(args):
         use_temporal_positives=args.use_temporal,
     )
     
+    # PyTorch DataLoader optimization for Windows: Keep workers alive across epochs
+    # to prevent the massive delay when recreating processes CPU-side.
+    prefetch = max(2, 16 // max(1, args.num_workers)) if args.num_workers > 0 else None
+    
     loader = DataLoader(
         ssl_dataset,
         batch_size=args.batch_size,
@@ -100,6 +104,8 @@ def train_ssl(args):
         drop_last=True,
         num_workers=args.num_workers,
         pin_memory=True,
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=prefetch,
         collate_fn=ssl_collate_fn,
     )
     
