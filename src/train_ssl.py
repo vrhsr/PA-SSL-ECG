@@ -117,12 +117,9 @@ def train_ssl(args):
     n_params = sum(p.numel() for p in encoder.parameters())
     print(f"Encoder parameters: {n_params:,}")
     
-    # Compile model for faster GPU execution (PyTorch 2.0+)
-    try:
-        encoder = torch.compile(encoder)
-        print("  torch.compile() enabled (faster GPU kernels)")
-    except Exception:
-        print("  torch.compile() not available, using eager mode")
+    # GPU performance optimizations (Windows-compatible, no Triton needed)
+    torch.backends.cudnn.benchmark = True  # Auto-tune conv kernels for this input size
+    print("  cudnn.benchmark enabled (auto-tuning GPU kernels)")
     
     # ─── Optimizer ────────────────────────────────────────────────────────
     optimizer = optim.AdamW(

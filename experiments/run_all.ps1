@@ -78,7 +78,7 @@ Write-Host "`n[4/12] Metadata-Conditioned Training (200 Epochs)..."
 if (Test-Path "experiments/ssl_resnet1d_metadata/history.json") {
     Write-Host "  Already trained. Skipping."
 } else {
-    python -m src.train_ssl --encoder resnet1d --augmentation metadata --use_temporal --epochs 200 --batch_size 1024 --seed 42 --output_dir "experiments/ssl_resnet1d_metadata"
+    python -m src.train_ssl --encoder resnet1d --augmentation physio --use_metadata --use_temporal --epochs 200 --batch_size 1024 --seed 42 --output_dir "experiments/ssl_resnet1d_metadata"
 }
 
 # --- Step 5: Training Convergence Curves (P4) ---
