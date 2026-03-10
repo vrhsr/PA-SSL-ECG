@@ -19,6 +19,7 @@ from torch.cuda.amp import GradScaler, autocast
 import numpy as np
 import argparse
 import os
+import sys
 import time
 import json
 from tqdm import tqdm
@@ -161,16 +162,20 @@ def train_ssl(args):
     # ─── Training Loop ────────────────────────────────────────────────────
     best_loss = float('inf')
     history = []
+    is_interactive = sys.stdout.isatty()  # Detect if running in a terminal vs redirected to file
     
     for epoch in range(args.epochs):
         encoder.train()
         running_loss = 0.0
         running_loss_aug = 0.0
         running_loss_temp = 0.0
+        n_total = len(loader)
         
-        pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}")
+        # Only show tqdm progress bar in interactive terminals (not file redirect)
+        pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}",
+                    disable=(not is_interactive))
         
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
             view1 = batch['view1'].to(device)
             view2 = batch['view2'].to(device)
             
@@ -212,12 +217,13 @@ def train_ssl(args):
             running_loss_aug += loss_aug.item()
             running_loss_temp += loss_temp.item()
             
-            pbar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'aug': f'{loss_aug.item():.4f}',
-                'temp': f'{loss_temp.item():.4f}',
-                'lr': f'{scheduler.get_last_lr()[0]:.6f}',
-            })
+            if is_interactive:
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'aug': f'{loss_aug.item():.4f}',
+                    'temp': f'{loss_temp.item():.4f}',
+                    'lr': f'{scheduler.get_last_lr()[0]:.6f}',
+                })
         
         scheduler.step()
         
