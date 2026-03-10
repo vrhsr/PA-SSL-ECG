@@ -242,7 +242,7 @@ def train_ssl(args):
                 'loss': epoch_loss,
                 'config': config,
             }, os.path.join(exp_dir, 'best_checkpoint.pth'))
-            print(f"  ✓ New best model saved (loss={best_loss:.4f})")
+            print(f"  > New best model saved (loss={best_loss:.4f})")
         
         # Periodic checkpoint
         if (epoch + 1) % 20 == 0:
