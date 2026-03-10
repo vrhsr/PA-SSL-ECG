@@ -122,7 +122,7 @@ def process_chapman(output_file=None):
     all_beat_idxs = []
     all_rpeak_positions = []
     
-    for rec in tqdm(records, desc="Processing Chapman"):
+    for rec in tqdm(records, desc="Processing Chapman", mininterval=15.0):
         try:
             record_path = os.path.join(DATA_DIR, rec)
             signals, fields = wfdb.rdsamp(record_path)

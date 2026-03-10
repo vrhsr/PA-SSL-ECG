@@ -215,7 +215,7 @@ def process_ptbxl(output_file=None, label_mode='binary'):
     all_weights = []
     all_heights = []
     
-    for ecg_id, row in tqdm(Y.iterrows(), total=len(Y), desc="Processing PTB-XL"):
+    for ecg_id, row in tqdm(Y.iterrows(), total=len(Y), desc="Processing PTB-XL", mininterval=15.0):
         # Get label
         lbl = label_fn(row.scp_codes, agg_df)
         if lbl == -1:

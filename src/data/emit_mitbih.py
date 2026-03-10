@@ -173,7 +173,7 @@ def process_mitbih(output_file=None):
     all_beat_idxs = []
     all_rpeak_positions = []
     
-    for rec in tqdm(records, desc="Processing MIT-BIH"):
+    for rec in tqdm(records, desc="Processing MIT-BIH", mininterval=15.0):
         try:
             beats, lbls, pids, bidxs, rpeaks = process_record(rec)
             all_beats.extend(beats)
