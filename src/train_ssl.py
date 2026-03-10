@@ -246,7 +246,7 @@ def train_ssl(args):
         })
         
         print(f"Epoch {epoch+1}: loss={epoch_loss:.4f} "
-              f"(aug={epoch_loss_aug:.4f}, temp={epoch_loss_temp:.4f})")
+              f"(aug={epoch_loss_aug:.4f}, temp={epoch_loss_temp:.4f})", flush=True)
         
         # Save checkpoint
         if epoch_loss < best_loss:
