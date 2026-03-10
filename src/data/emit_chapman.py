@@ -81,6 +81,11 @@ def process_chapman(output_file=None):
     """
     if output_file is None:
         output_file = OUTPUT_FILE
+        
+    global DATA_DIR
+    nested_dir = os.path.join(DATA_DIR, 'WFDB_ChapmanShaoxing')
+    if os.path.exists(nested_dir):
+        DATA_DIR = nested_dir
     
     if not os.path.exists(DATA_DIR):
         print(f"ERROR: Chapman-Shaoxing data not found at {DATA_DIR}")
@@ -91,12 +96,12 @@ def process_chapman(output_file=None):
         return None
     
     # Try to download via wfdb if directory is empty
-    dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.dat')] if os.path.exists(DATA_DIR) else []
+    dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.mat') or f.endswith('.hea')] if os.path.exists(DATA_DIR) else []
     if len(dat_files) == 0:
         print("Attempting to download Chapman-Shaoxing via wfdb...")
         try:
             wfdb.dl_database('chapman-shaoxing', DATA_DIR)
-            dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.dat')]
+            dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.mat')]
         except Exception as e:
             print(f"Download failed: {e}")
             print("Please download manually from PhysioNet.")
