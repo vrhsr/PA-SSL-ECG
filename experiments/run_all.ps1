@@ -42,14 +42,14 @@ Write-Host "`n[2/12] SSL Pretraining (200 Epochs, Multi-Seed)..."
 
 foreach ($seed in @(42, 123, 456)) {
     Write-Host "`nTraining: ResNet1D + PhysioAug + Temporal (seed=$seed)"
-    if (Test-Path "experiments/ssl_resnet1d_physio_temporal_s$seed/best_checkpoint.pth") {
+    if (Test-Path "experiments/ssl_resnet1d_physio_temporal_s$seed/history.json") {
         Write-Host "  Already trained. Skipping."
     } else {
         python -m src.train_ssl --encoder resnet1d --augmentation physio --use_temporal --epochs 200 --batch_size 256 --seed $seed --output_dir "experiments/ssl_resnet1d_physio_temporal_s$seed"
     }
 
     Write-Host "`nTraining: WavKAN + PhysioAug + Temporal (seed=$seed)"
-    if (Test-Path "experiments/ssl_wavkan_physio_temporal_s$seed/best_checkpoint.pth") {
+    if (Test-Path "experiments/ssl_wavkan_physio_temporal_s$seed/history.json") {
         Write-Host "  Already trained. Skipping."
     } else {
         python -m src.train_ssl --encoder wavkan --augmentation physio --use_temporal --epochs 200 --batch_size 256 --seed $seed --output_dir "experiments/ssl_wavkan_physio_temporal_s$seed"
@@ -60,14 +60,14 @@ foreach ($seed in @(42, 123, 456)) {
 Write-Host "`n[3/12] SSL Pretraining Ablations (100 Epochs)..."
 
 Write-Host "`nTraining: ResNet1D + NaiveAug (ablation)"
-if (Test-Path "experiments/ssl_resnet1d_naive/best_checkpoint.pth") {
+if (Test-Path "experiments/ssl_resnet1d_naive/history.json") {
     Write-Host "  Already trained. Skipping."
 } else {
     python -m src.train_ssl --encoder resnet1d --augmentation naive --no_temporal --epochs 100 --batch_size 256 --seed 42 --output_dir "experiments/ssl_resnet1d_naive"
 }
 
 Write-Host "`nTraining: ResNet1D + PhysioAug, no temporal (ablation)"
-if (Test-Path "experiments/ssl_resnet1d_physio/best_checkpoint.pth") {
+if (Test-Path "experiments/ssl_resnet1d_physio/history.json") {
     Write-Host "  Already trained. Skipping."
 } else {
     python -m src.train_ssl --encoder resnet1d --augmentation physio --no_temporal --epochs 100 --batch_size 256 --seed 42 --output_dir "experiments/ssl_resnet1d_physio"
@@ -75,7 +75,7 @@ if (Test-Path "experiments/ssl_resnet1d_physio/best_checkpoint.pth") {
 
 # --- Step 4: Metadata-Conditioned Training (200 Epochs) ---
 Write-Host "`n[4/12] Metadata-Conditioned Training (200 Epochs)..."
-if (Test-Path "experiments/ssl_resnet1d_metadata/best_checkpoint.pth") {
+if (Test-Path "experiments/ssl_resnet1d_metadata/history.json") {
     Write-Host "  Already trained. Skipping."
 } else {
     python -m src.train_ssl --encoder resnet1d --augmentation metadata --use_temporal --epochs 200 --batch_size 256 --seed 42 --output_dir "experiments/ssl_resnet1d_metadata"
