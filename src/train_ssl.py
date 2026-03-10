@@ -117,6 +117,13 @@ def train_ssl(args):
     n_params = sum(p.numel() for p in encoder.parameters())
     print(f"Encoder parameters: {n_params:,}")
     
+    # Compile model for faster GPU execution (PyTorch 2.0+)
+    try:
+        encoder = torch.compile(encoder)
+        print("  torch.compile() enabled (faster GPU kernels)")
+    except Exception:
+        print("  torch.compile() not available, using eager mode")
+    
     # ─── Optimizer ────────────────────────────────────────────────────────
     optimizer = optim.AdamW(
         encoder.parameters(),
@@ -313,7 +320,7 @@ if __name__ == "__main__":
     # Performance
     parser.add_argument('--amp', action='store_true', default=True,
                         help='Use mixed precision training')
-    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--num_workers', type=int, default=8)
     
     # Reproducibility
     parser.add_argument('--seed', type=int, default=42,
