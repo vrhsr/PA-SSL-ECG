@@ -139,13 +139,22 @@ def process_chapman(output_file=None):
                 if len(row_data) > 0:
                     rhythm = str(row_data.iloc[0, 1]).strip()
                     lbl = 0 if rhythm in NORMAL_RHYTHMS else 1
-            elif hasattr(fields, 'comments') and fields.get('comments'):
-                # Try to extract from WFDB header comments
+            elif 'comments' in fields and fields.get('comments'):
+                # Try to extract from WFDB header comments (SNOMED CT codes)
+                # Chapman-Shaoxing uses SNOMED CT in the PhysioNet 2020 format: "Dx: 426783006, ..."
+                # Normal SNOMED CT Codes: 426783006 (SR), 426285000 (Normal SR), 426177001 (SB), 427084000 (ST)
+                normal_snomed = {'426783006', '426285000', '426177001', '427084000'}
+                
                 for comment in fields['comments']:
-                    comment_upper = comment.upper().strip()
-                    if any(nr in comment_upper for nr in ['SINUS RHYTHM', 'NORMAL']):
-                        lbl = 0
-                        break
+                    if comment.startswith('Dx:'):
+                        dx_codes = set(code.strip() for code in comment.replace('Dx:', '').split(','))
+                        if any(code in normal_snomed for code in dx_codes):
+                            lbl = 0
+                            break
+                        else:
+                            lbl = 1
+                            break
+                        
                 if lbl == -1:
                     lbl = 1  # Assume abnormal if not explicitly normal
             else:
