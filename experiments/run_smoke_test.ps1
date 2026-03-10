@@ -107,7 +107,9 @@ from src.experiments import profile_model
 from src.models.encoder import build_encoder
 e = build_encoder('resnet1d', proj_dim=128)
 p = profile_model(e)
-print(f'  resnet1d: {p[\"n_params\"]/1e6:.1f}M params, {p[\"inference_ms\"]:.1f}ms/sample')
+p1 = p["n_params"] / 1e6
+p2 = p["inference_ms"]
+print("  resnet1d: {:.1f}M params, {:.1f}ms/sample".format(p1, p2))
 print('  Efficiency OK')
 "
 if ($LASTEXITCODE -ne 0) { $errors += "Efficiency skipped" }
