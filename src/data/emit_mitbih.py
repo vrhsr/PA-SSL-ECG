@@ -1,24 +1,14 @@
 """
-PA-SSL: MIT-BIH Arrhythmia Database Processor
-Downloads, segments, and normalizes MIT-BIH recordings into beat-level CSVs.
-
-Adapted from WavKAN-CL with enhancements:
-  - R-peak position preserved per beat
-  - Beat index for temporal adjacency
-  - Record-level IDs for patient-aware splitting
+PA-SSL: MIT-BIH Arrhythmia Database Processor (CSV/Text version)
+Processes MIT-BIH recordings provided as .csv and .annotations.txt files.
 """
 
-import wfdb
-try:
-    import wfdb.processing
-    HAS_WFDB_PROCESSING = True
-except ImportError:
-    HAS_WFDB_PROCESSING = False
 import numpy as np
 import pandas as pd
 from scipy.signal import resample, butter, filtfilt, find_peaks
 from tqdm import tqdm
 import os
+import re
 
 # ─── CONFIGURATION ───────────────────────────────────────────────────────────
 SAMPLE_RATE = 100       # Target Hz
@@ -27,12 +17,11 @@ WINDOW_SAMPLES = int(SAMPLE_RATE * WINDOW_SEC)  # 250 samples
 FILTER_LOW = 0.5
 FILTER_HIGH = 40.0
 SOURCE_RATE = 360       # MIT-BIH native
-LEAD_IDX = 0            # Lead II is typically index 0 in MIT-BIH
+LEAD_IDX = 1            # In CSVs, typically column 0 is index, 1 is MLII
 DATA_DIR = 'data/mitbih'
 OUTPUT_FILE = 'data/mitbih_processed.csv'
 
 # ─── AAMI MAPPING ────────────────────────────────────────────────────────────
-# Following ANSI/AAMI EC57 standard for beat classification
 AAMI_MAP = {
     'N': 0, 'L': 0, 'R': 0, 'e': 0, 'j': 0,   # Normal
     'A': 1, 'a': 1, 'J': 1, 'S': 1,             # SVE (Abnormal)
@@ -44,67 +33,64 @@ AAMI_MAP = {
 # ─── SIGNAL PROCESSING ───────────────────────────────────────────────────────
 
 def bandpass_filter(data, lowcut, highcut, fs, order=3):
-    """Apply Butterworth bandpass filter."""
     nyquist = 0.5 * fs
     low = lowcut / nyquist
     high = highcut / nyquist
     b, a = butter(order, [low, high], btype='band')
-    y = filtfilt(b, a, data)
-    return y
+    return filtfilt(b, a, data)
 
 def z_score_normalize(signal):
-    """Per-beat z-score normalization."""
     mean = np.mean(signal)
     std = np.std(signal)
     if std < 1e-6:
         return np.zeros_like(signal)
     return (signal - mean) / std
 
-# ─── R-PEAK DETECTION (with fallback) ────────────────────────────────────────
+# ─── PARSING ──────────────────────────────────────────────────────────────────
 
-def detect_r_peaks(signal, fs):
-    """Detect R-peaks using wfdb.processing or scipy fallback."""
-    if HAS_WFDB_PROCESSING:
-        return wfdb.processing.gqrs_detect(signal, fs=fs)
-    else:
-        height = np.mean(signal) + 0.5 * np.std(signal)
-        distance = int(0.4 * fs)
-        peaks, _ = find_peaks(signal, height=height, distance=distance)
-        return peaks
-
-
-# ─── RECORD PROCESSING ───────────────────────────────────────────────────────
+def parse_annotations(ann_path):
+    """
+    Parses MIT-BIH annotations from .annotations.txt.
+    Format is typically: [Time] [Sample] [Type] [Sub] [Chan] [Num] [Aux]
+    """
+    samples = []
+    symbols = []
+    with open(ann_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines[1:]: # Skip header
+            parts = re.split(r'\s+', line.strip())
+            if len(parts) >= 3:
+                try:
+                    sample = int(parts[1])
+                    symbol = parts[2]
+                    samples.append(sample)
+                    symbols.append(symbol)
+                except ValueError:
+                    continue
+    return samples, symbols
 
 def process_record(record_name):
-    """
-    Process a single MIT-BIH record into segmented beats.
+    csv_path = os.path.join(DATA_DIR, f"{record_name}.csv")
+    ann_path = os.path.join(DATA_DIR, f"{record_name}annotations.txt")
     
-    Returns:
-        beats, labels, patient_ids, beat_idxs, rpeak_positions
-    """
-    record_path = f"{DATA_DIR}/{record_name}"
-    signals, fields = wfdb.rdsamp(record_path)
-    annotation = wfdb.rdann(record_path, 'atr')
+    # Load signal (CSV usually has index, MLII, V1)
+    df_sig = pd.read_csv(csv_path)
+    # Use second column (MLII)
+    signal = df_sig.iloc[:, 1].values
     
-    # Extract Lead II (index 0)
-    signal = signals[:, LEAD_IDX]
+    # Load annotations
+    samples, symbols = parse_annotations(ann_path)
     
-    # Bandpass filter
+    # Filter
     signal = bandpass_filter(signal, FILTER_LOW, FILTER_HIGH, SOURCE_RATE)
     
-    beats = []
-    labels = []
-    patient_ids = []
-    beat_idxs = []
-    rpeak_positions = []
+    beats, labels, pids, bidxs, rpeaks = [], [], [], [], []
     
-    for beat_idx, (sample_idx, symbol) in enumerate(
-            zip(annotation.sample, annotation.symbol)):
+    for beat_idx, (sample_idx, symbol) in enumerate(zip(samples, symbols)):
         if symbol not in AAMI_MAP:
             continue
         
-        # Window centered on R-peak
-        window_raw = int(WINDOW_SEC * SOURCE_RATE)  # 900 at 360Hz
+        window_raw = int(WINDOW_SEC * SOURCE_RATE)
         half_window = window_raw // 2
         
         start = sample_idx - half_window
@@ -114,84 +100,55 @@ def process_record(record_name):
             continue
         
         beat_raw = signal[start:end]
-        
-        # Resample (900 → 250)
         beat_resampled = resample(beat_raw, WINDOW_SAMPLES)
-        
-        # R-peak position in resampled window
         r_peak_resampled = int(half_window * WINDOW_SAMPLES / window_raw)
-        
-        # Normalize
         beat_norm = z_score_normalize(beat_resampled)
         
         beats.append(beat_norm)
         labels.append(AAMI_MAP[symbol])
-        patient_ids.append(record_name)
-        beat_idxs.append(beat_idx)
-        rpeak_positions.append(r_peak_resampled)
-    
-    return beats, labels, patient_ids, beat_idxs, rpeak_positions
-
-# ─── MAIN ─────────────────────────────────────────────────────────────────────
+        pids.append(record_name)
+        bidxs.append(beat_idx)
+        rpeaks.append(r_peak_resampled)
+        
+    return beats, labels, pids, bidxs, rpeaks
 
 def process_mitbih(output_file=None):
-    """Process all MIT-BIH records into a single CSV."""
-    global DATA_DIR
     if output_file is None:
         output_file = OUTPUT_FILE
-    
-    # Download if needed
+        
     if not os.path.exists(DATA_DIR):
-        print(f"Downloading MIT-BIH to {DATA_DIR}...")
-        os.makedirs(DATA_DIR, exist_ok=True)
-        wfdb.dl_database('mitdb', DATA_DIR)
-    
-    # Check for .dat files, also look inside subdirectories (Kaggle nesting)
-    dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.dat')]
-    if len(dat_files) == 0:
-        # Check nested subdirectories  
-        for sub in os.listdir(DATA_DIR):
-            subpath = os.path.join(DATA_DIR, sub)
-            if os.path.isdir(subpath):
-                nested_dats = [f for f in os.listdir(subpath) if f.endswith('.dat')]
-                if len(nested_dats) > 0:
-                    print(f"  Found MIT-BIH data in nested folder: {subpath}")
-                    DATA_DIR = subpath
-                    dat_files = nested_dats
-                    break
-    
-    records = sorted(list(set(
-        f.split('.')[0] for f in os.listdir(DATA_DIR) if f.endswith('.dat')
-    )))
+        print(f"ERROR: MIT-BIH data not found at {DATA_DIR}")
+        return
+        
+    csv_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.csv')]
+    records = sorted([f.replace('.csv', '') for f in csv_files])
     
     print(f"Found {len(records)} MIT-BIH records. Processing...")
     
-    all_beats = []
-    all_labels = []
-    all_patient_ids = []
-    all_record_ids = []
-    all_beat_idxs = []
-    all_rpeak_positions = []
+    all_beats, all_labels, all_pids, all_record_ids, all_bidxs, all_rpeaks = [], [], [], [], [], []
     
     for rec in tqdm(records, desc="Processing MIT-BIH", mininterval=15.0):
         try:
             beats, lbls, pids, bidxs, rpeaks = process_record(rec)
             all_beats.extend(beats)
             all_labels.extend(lbls)
-            all_patient_ids.extend(pids)
+            all_pids.extend(pids)
             all_record_ids.extend([rec] * len(beats))
-            all_beat_idxs.extend(bidxs)
-            all_rpeak_positions.extend(rpeaks)
+            all_bidxs.extend(bidxs)
+            all_rpeaks.extend(rpeaks)
         except Exception as e:
-            print(f"Error processing {rec}: {e}")
-    
-    # Build DataFrame
+            continue
+            
+    if len(all_beats) == 0:
+        print("WARNING: No beats extracted. Check dataset structure.")
+        return
+        
     df = pd.DataFrame(np.array(all_beats))
     df['label'] = all_labels
-    df['patient_id'] = all_patient_ids
+    df['patient_id'] = all_pids
     df['record_id'] = all_record_ids
-    df['beat_idx'] = all_beat_idxs
-    df['r_peak_pos'] = all_rpeak_positions
+    df['beat_idx'] = all_bidxs
+    df['r_peak_pos'] = all_rpeaks
     
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     df.to_csv(output_file, index=False)
@@ -208,10 +165,5 @@ def process_mitbih(output_file=None):
     
     return df
 
-
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Process MIT-BIH dataset")
-    parser.add_argument('--output', type=str, default=OUTPUT_FILE)
-    args = parser.parse_args()
-    process_mitbih(args.output)
+    process_mitbih()

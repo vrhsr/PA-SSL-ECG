@@ -29,11 +29,12 @@ WINDOW_SEC = 2.5        # Window length in seconds
 WINDOW_SAMPLES = int(SAMPLE_RATE * WINDOW_SEC)  # 250 samples
 FILTER_LOW = 0.5        # Bandpass low cutoff (Hz)
 FILTER_HIGH = 40.0      # Bandpass high cutoff (Hz)
-SOURCE_RATE = 500       # PTB-XL native sampling rate (high-res)
+SOURCE_RATE = 100       # PTB-XL native sampling rate (using 100Hz records)
 LEAD_IDX = 1            # Lead II index in 12-lead order (I, II, III...)
-DATA_DIR = 'data/ptb-xl-1.0.3'
+DATA_DIR = 'data/ptb-xl'
 # Fallback paths for Kaggle downloads
 DATA_DIR_FALLBACKS = [
+    'data/ptb-xl',
     'data/ptb-xl-1.0.3',
     'data/ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.3',
     'data/ptbxl',
@@ -228,7 +229,7 @@ def process_ptbxl(output_file=None, label_mode='binary'):
         height = float(row.height) if pd.notna(row.height) else 165.0 # Mean imputation
         
         # Load signal
-        record_path = os.path.join(DATA_DIR, row.filename_hr)
+        record_path = os.path.join(DATA_DIR, row.filename_lr)
         try:
             signals, fields = wfdb.rdsamp(record_path)
         except Exception as e:

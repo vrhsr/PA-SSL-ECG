@@ -2,7 +2,7 @@
 PA-SSL: Self-Supervised Pretraining Script
 
 Trains an encoder using the combined contrastive objective:
-  L = α · L_augmentation + β · L_temporal
+  L = alpha * L_augmentation + beta * L_temporal
 
 Supports both ResNet1D and WavKAN encoders, physiology-aware and naive
 augmentation pipelines, with WandB/TensorBoard logging.
@@ -117,9 +117,12 @@ def train_ssl(args):
     n_params = sum(p.numel() for p in encoder.parameters())
     print(f"Encoder parameters: {n_params:,}")
     
-    # GPU performance optimizations (Windows-compatible, no Triton needed)
-    torch.backends.cudnn.benchmark = True  # Auto-tune conv kernels for this input size
-    print("  cudnn.benchmark enabled (auto-tuning GPU kernels)")
+    # GPU optimization
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+    
+    # torch.compile is disabled on Windows due to encoding/dynamo issues
+    print("  Running in eager mode (torch.compile disabled for compatibility)")
     
     # ─── Optimizer ────────────────────────────────────────────────────────
     optimizer = optim.AdamW(
@@ -153,7 +156,12 @@ def train_ssl(args):
     exp_name = f"ssl_{args.encoder}_{args.augmentation}"
     if args.use_temporal:
         exp_name += "_temporal"
-    exp_dir = os.path.join(args.output_dir, exp_name)
+        
+    if args.output_dir == 'experiments':
+        exp_dir = os.path.join(args.output_dir, exp_name)
+    else:
+        exp_dir = args.output_dir
+        
     os.makedirs(exp_dir, exist_ok=True)
     
     # Save config
@@ -168,7 +176,46 @@ def train_ssl(args):
     history = []
     is_interactive = sys.stdout.isatty()  # Detect if running in a terminal vs redirected to file
     
-    for epoch in range(args.epochs):
+    start_epoch = 0
+    
+    # Auto-resume logic
+    if os.path.exists(exp_dir):
+        # Find highest epoch checkpoint
+        ckpt_files = [f for f in os.listdir(exp_dir) if f.startswith('checkpoint_epoch') and f.endswith('.pth')]
+        latest_ckpt = None
+        if ckpt_files:
+            epochs_saved = [int(f.replace('checkpoint_epoch', '').replace('.pth', '')) for f in ckpt_files]
+            latest_epoch = max(epochs_saved)
+            latest_ckpt = f'checkpoint_epoch{latest_epoch}.pth'
+        elif os.path.exists(os.path.join(exp_dir, 'best_checkpoint.pth')):
+            latest_ckpt = 'best_checkpoint.pth'
+            
+        if latest_ckpt is not None:
+            ckpt_path = os.path.join(exp_dir, latest_ckpt)
+            print(f"Resuming from checkpoint: {ckpt_path}")
+            ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+            encoder.load_state_dict(ckpt['encoder_state_dict'])
+            if 'optimizer_state_dict' in ckpt:
+                optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            start_epoch = ckpt['epoch']
+            
+            # Fast-forward learning rate scheduler
+            for _ in range(start_epoch):
+                scheduler.step()
+                
+            if 'loss' in ckpt:
+                best_loss = float(ckpt['loss'])
+                
+            # Attempt to load existing history
+            history_path = os.path.join(exp_dir, 'history.json')
+            if os.path.exists(history_path):
+                try:
+                    with open(history_path, 'r') as f:
+                        history = json.load(f)
+                except Exception as e:
+                    print(f"  Warning: Could not load history.json ({e})")
+    
+    for epoch in range(start_epoch, args.epochs):
         encoder.train()
         running_loss = 0.0
         running_loss_aug = 0.0
@@ -246,7 +293,7 @@ def train_ssl(args):
         })
         
         print(f"Epoch {epoch+1}: loss={epoch_loss:.4f} "
-              f"(aug={epoch_loss_aug:.4f}, temp={epoch_loss_temp:.4f})", flush=True)
+              f"(aug={epoch_loss_aug:.4f}, temp={epoch_loss_temp:.4f})")
         
         # Save checkpoint
         if epoch_loss < best_loss:
@@ -265,12 +312,14 @@ def train_ssl(args):
             torch.save({
                 'epoch': epoch + 1,
                 'encoder_state_dict': encoder.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
                 'loss': epoch_loss,
             }, os.path.join(exp_dir, f'checkpoint_epoch{epoch+1}.pth'))
-    
-    # Save training history
-    with open(os.path.join(exp_dir, 'history.json'), 'w') as f:
-        json.dump(history, f, indent=2)
+            
+        # Save training history iteratively
+        with open(os.path.join(exp_dir, 'history.json'), 'w') as f:
+            json.dump(history, f, indent=2)
+
     
     print(f"\n{'='*60}")
     print(f"Training Complete!")
@@ -317,7 +366,8 @@ if __name__ == "__main__":
     # Performance
     parser.add_argument('--amp', action='store_true', default=True,
                         help='Use mixed precision training')
-    parser.add_argument('--num_workers', type=int, default=8)
+    parser.add_argument('--num_workers', type=int, default=8 if os.name != 'nt' else 0,
+                        help='Number of workers (0 on Windows to avoid paging file crashes)')
     
     # Reproducibility
     parser.add_argument('--seed', type=int, default=42,

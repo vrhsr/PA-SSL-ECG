@@ -82,11 +82,7 @@ def process_chapman(output_file=None):
     if output_file is None:
         output_file = OUTPUT_FILE
         
-    global DATA_DIR
-    nested_dir = os.path.join(DATA_DIR, 'WFDB_ChapmanShaoxing')
-    if os.path.exists(nested_dir):
-        DATA_DIR = nested_dir
-    
+    # Ensure base data directory exists
     if not os.path.exists(DATA_DIR):
         print(f"ERROR: Chapman-Shaoxing data not found at {DATA_DIR}")
         print("Please download from: https://physionet.org/content/chapman-shaoxing/1.0.0/")
@@ -108,28 +104,29 @@ def process_chapman(output_file=None):
             return None
     
     # Load reference/labels CSV if available
-    # Chapman-Shaoxing typically has a reference CSV or header-based labels
     label_file = os.path.join(DATA_DIR, 'REFERENCE.csv')
     label_df = None
     if os.path.exists(label_file):
         label_df = pd.read_csv(label_file)
         print(f"Loaded {len(label_df)} label entries from REFERENCE.csv")
     
-    records = sorted(list(set(
-        f.split('.')[0] for f in dat_files
-    )))
-    print(f"Found {len(records)} Chapman-Shaoxing records. Processing...")
+    # Recursively find all .mat records
+    records_with_paths = []
+    for root, dirs, files in os.walk(DATA_DIR):
+        for f in files:
+            if f.endswith('.mat'):
+                rec_base = f.replace('.mat', '')
+                if os.path.exists(os.path.join(root, rec_base + '.hea')):
+                    records_with_paths.append((root, rec_base))
     
-    all_beats = []
-    all_labels = []
-    all_patient_ids = []
-    all_record_ids = []
-    all_beat_idxs = []
-    all_rpeak_positions = []
+    records_with_paths = sorted(list(set(records_with_paths)))
+    print(f"Found {len(records_with_paths)} Chapman-Shaoxing records across all directories. Processing...")
     
-    for rec in tqdm(records, desc="Processing Chapman", mininterval=15.0):
+    all_beats, all_labels, all_patient_ids, all_record_ids, all_beat_idxs, all_rpeak_positions = [], [], [], [], [], []
+    
+    for rec_dir, rec in tqdm(records_with_paths, desc="Processing Chapman", mininterval=15.0):
         try:
-            record_path = os.path.join(DATA_DIR, rec)
+            record_path = os.path.join(rec_dir, rec)
             signals, fields = wfdb.rdsamp(record_path)
             
             # Determine label from header comments or REFERENCE.csv
