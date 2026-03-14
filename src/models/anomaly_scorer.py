@@ -203,3 +203,34 @@ def reliability_diagram_data(y_true, y_proba, n_bins=15):
         'bin_confidences': [b[2] for b in bin_data],
         'bin_counts': [b[3] for b in bin_data],
     }
+
+
+def sensitivity_specificity(y_true, y_proba):
+    """
+    Compute Sensitivity and Specificity at the optimal cut-point 
+    using Youden's J statistic (J = Sensitivity + Specificity - 1).
+    
+    Args:
+        y_true: (N,) true labels (binary 0/1)
+        y_proba: (N,) predicted probabilities for class 1
+        
+    Returns:
+        sensitivity, specificity
+    """
+    from sklearn.metrics import roc_curve, recall_score
+    try:
+        fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+        # Youden's J
+        J = tpr - fpr
+        optimal_idx = np.argmax(J)
+        optimal_threshold = thresholds[optimal_idx]
+        
+        y_pred = (y_proba >= optimal_threshold).astype(int)
+        
+        sens = recall_score(y_true, y_pred, pos_label=1, zero_division=0)
+        spec = recall_score(y_true, y_pred, pos_label=0, zero_division=0)
+        return float(sens), float(spec)
+    except Exception:
+        # Fallback for multi-class or error
+        return 0.0, 0.0
+

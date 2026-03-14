@@ -54,25 +54,102 @@ class NTXentLoss(nn.Module):
         return F.cross_entropy(sim_matrix, targets)
 
 
+class VICRegLoss(nn.Module):
+    """
+    VICReg: Variance-Invariance-Covariance Regularization.
+    """
+    def __init__(self, sim_coeff=25.0, std_coeff=25.0, cov_coeff=1.0):
+        super().__init__()
+        self.sim_coeff = sim_coeff
+        self.std_coeff = std_coeff
+        self.cov_coeff = cov_coeff
+
+    def off_diagonal(self, x):
+        n, m = x.shape
+        assert n == m
+        return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+    def forward(self, z_i, z_j):
+        # invariance loss
+        repr_loss = F.mse_loss(z_i, z_j)
+
+        z_i = z_i - z_i.mean(dim=0)
+        z_j = z_j - z_j.mean(dim=0)
+
+        # variance loss
+        std_i = torch.sqrt(z_i.var(dim=0) + 1e-04)
+        std_j = torch.sqrt(z_j.var(dim=0) + 1e-04)
+        std_loss = torch.mean(F.relu(1 - std_i)) / 2 + torch.mean(F.relu(1 - std_j)) / 2
+
+        # covariance loss
+        N = z_i.size(0)
+        D = z_i.size(1)
+        cov_i = (z_i.T @ z_i) / (N - 1)
+        cov_j = (z_j.T @ z_j) / (N - 1)
+        cov_loss = self.off_diagonal(cov_i).pow_(2).sum() / D + self.off_diagonal(cov_j).pow_(2).sum() / D
+
+        loss = self.sim_coeff * repr_loss + self.std_coeff * std_loss + self.cov_coeff * cov_loss
+        return loss
+
+class BarlowTwinsLoss(nn.Module):
+    """
+    Barlow Twins cross-correlation loss.
+    """
+    def __init__(self, lambd=0.0051):
+        super().__init__()
+        self.lambd = lambd
+
+    def off_diagonal(self, x):
+        n, m = x.shape
+        assert n == m
+        return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+    def forward(self, z_i, z_j):
+        N = z_i.size(0)
+        D = z_i.size(1)
+
+        # normalize repr. along the batch dimension
+        z_i_norm = (z_i - z_i.mean(0)) / (z_i.std(0) + 1e-5)
+        z_j_norm = (z_j - z_j.mean(0)) / (z_j.std(0) + 1e-5)
+
+        # cross-correlation matrix
+        c = (z_i_norm.T @ z_j_norm) / N
+
+        # loss
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = self.off_diagonal(c).pow_(2).sum()
+        loss = on_diag + self.lambd * off_diag
+        return loss
+
 class CombinedContrastiveLoss(nn.Module):
     """
     Combined contrastive loss for PA-SSL.
     
     L_total = α · L_augmentation + β · L_temporal
     
-    - L_augmentation: NT-Xent between two augmented views of the same beat
-    - L_temporal: NT-Xent between a beat and its temporal neighbor
+    Supports switching L_augmentation objective via loss_type.
     """
     
-    def __init__(self, temperature=0.5, alpha=1.0, beta=0.5):
+    def __init__(self, temperature=0.5, alpha=1.0, beta=0.5, loss_type='ntxent'):
         """
         Args:
             temperature: Temperature for NT-Xent
             alpha: Weight for augmentation contrast
             beta: Weight for temporal contrast
+            loss_type: 'ntxent', 'vicreg', or 'barlow'
         """
         super().__init__()
-        self.ntxent = NTXentLoss(temperature)
+        self.loss_type = loss_type
+        if loss_type == 'ntxent':
+            self.aug_loss_fn = NTXentLoss(temperature)
+        elif loss_type == 'vicreg':
+            self.aug_loss_fn = VICRegLoss()
+        elif loss_type == 'barlow':
+            self.aug_loss_fn = BarlowTwinsLoss()
+        else:
+            raise ValueError(f"Unknown loss_type: {loss_type}")
+            
+        self.temporal_loss_fn = NTXentLoss(temperature) # Temporal always uses cross-entropy similarity
         self.alpha = alpha
         self.beta = beta
     
@@ -88,7 +165,7 @@ class CombinedContrastiveLoss(nn.Module):
             total_loss, loss_aug, loss_temporal
         """
         # Augmentation contrastive loss (always computed)
-        loss_aug = self.ntxent(z_view1, z_view2)
+        loss_aug = self.aug_loss_fn(z_view1, z_view2)
         
         # Temporal contrastive loss (optional)
         loss_temporal = torch.tensor(0.0, device=z_view1.device)
@@ -101,9 +178,9 @@ class CombinedContrastiveLoss(nn.Module):
                     z_v1_valid = z_view1[valid_mask]
                     z_temp_valid = z_temporal[valid_mask]
                     if len(z_v1_valid) > 1:  # Need at least 2 for contrastive
-                        loss_temporal = self.ntxent(z_v1_valid, z_temp_valid)
+                        loss_temporal = self.temporal_loss_fn(z_v1_valid, z_temp_valid)
             else:
-                loss_temporal = self.ntxent(z_view1, z_temporal)
+                loss_temporal = self.temporal_loss_fn(z_view1, z_temporal)
         
         total_loss = self.alpha * loss_aug + self.beta * loss_temporal
         

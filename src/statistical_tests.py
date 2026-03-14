@@ -51,11 +51,18 @@ def aggregate_results(results_df, group_cols=('method', 'label_fraction'),
     for col in metric_cols:
         mean_col = f'{col}_mean'
         std_col = f'{col}_std'
-        agg[f'{col}_formatted'] = agg.apply(
-            lambda r: f"{r[mean_col]:.4f} +/- {r[std_col]:.4f}" 
-            if pd.notna(r[std_col]) and r[std_col] > 0 
-            else f"{r[mean_col]:.4f}", axis=1
-        )
+        
+        def format_row(r):
+            if pd.notna(r[std_col]) and r[std_col] > 0 and r.get(f'{col}_count', 1) > 1:
+                n = r[f'{col}_count']
+                ci_margin = 1.96 * r[std_col] / np.sqrt(n)
+                return f"{r[mean_col]:.4f} ($\\pm${ci_margin:.4f})"
+            elif pd.notna(r[std_col]) and r[std_col] > 0:
+                return f"{r[mean_col]:.4f} $\\pm$ {r[std_col]:.4f}"
+            else:
+                return f"{r[mean_col]:.4f}"
+                
+        agg[f'{col}_formatted'] = agg.apply(format_row, axis=1)
     
     return agg
 
@@ -161,6 +168,42 @@ def run_all_pairwise_tests(results_df, reference_method, metric='linear_accuracy
     return pd.DataFrame(test_results)
 
 
+def bootstrap_confidence_intervals(y_true, y_pred_or_proba, metric_fn, n_bootstrap=1000, seed=42):
+    """
+    Compute 95% bootstrap confidence intervals for a given metric.
+    
+    Args:
+        y_true: (N,) true labels
+        y_pred_or_proba: (N,) predictions or probabilities
+        metric_fn: function taking (y_true, y_pred) and returning a float
+        n_bootstrap: number of bootstrap samples
+        seed: random seed
+        
+    Returns:
+        (lower_bound, upper_bound)
+    """
+    rng = np.random.RandomState(seed)
+    n_samples = len(y_true)
+    scores = []
+    
+    for _ in range(n_bootstrap):
+        indices = rng.randint(0, n_samples, n_samples)
+        if len(np.unique(y_true[indices])) < 2:
+            continue
+        try:
+            score = metric_fn(y_true[indices], y_pred_or_proba[indices])
+            scores.append(score)
+        except Exception:
+            pass
+            
+    if len(scores) < 2:
+        return (np.nan, np.nan)
+    
+    lower = float(np.percentile(scores, 2.5))
+    upper = float(np.percentile(scores, 97.5))
+    return lower, upper
+
+
 # ==============================================================================
 # 3. LATEX TABLE GENERATION
 # ==============================================================================
@@ -171,8 +214,12 @@ def _format_cell(mean, std, is_best=False, is_second=False, p_value=None):
         return '-'
     
     val = f"{mean:.2f}"
-    if std > 0:
-        val = f"{mean:.2f}$\\pm${std:.2f}"
+    # Standard deviation format string is passed as std if it is formatted,
+    # or let's adapt to CI formatting (±x.xx)
+    if isinstance(std, str):
+        val = f"{mean:.2f} {std}"
+    elif std > 0:
+        val = f"{mean:.2f} ($\\pm${std:.2f})"
     
     # Significance marker
     sig = ''
@@ -221,7 +268,7 @@ def generate_main_results_table(agg_df, metrics=('linear_accuracy', 'linear_auro
     # Build header
     header = "\\begin{table}[t]\n\\centering\n"
     header += "\\caption{Main Results. PA-SSL vs baselines on PTB-XL. "
-    header += "Mean$\\pm$std over 3 seeds. Best in \\textbf{bold}, second \\underline{underlined}. "
+    header += "Mean (95\\% CI) over 3 seeds. Best in \\textbf{bold}, second \\underline{underlined}. "
     header += "$^{*}$p$<$0.05, $^{**}$p$<$0.01, $^{***}$p$<$0.001 (Wilcoxon).}\n"
     header += "\\label{tab:main_results}\n"
     header += f"\\begin{{tabular}}{{l{'c' * n_metrics}}}\n\\toprule\n"
@@ -282,7 +329,7 @@ def generate_label_efficiency_table(agg_df, metric='linear_accuracy', output_pat
     fractions = sorted(agg_df['label_fraction'].unique())
     
     header = "\\begin{table}[t]\n\\centering\n"
-    header += "\\caption{Label efficiency (Accuracy). Mean$\\pm$std over 3 seeds.}\n"
+    header += "\\caption{Label efficiency (Accuracy). Mean (95\\% CI) over 3 seeds.}\n"
     header += "\\label{tab:label_efficiency}\n"
     header += f"\\begin{{tabular}}{{l{'c' * len(fractions)}}}\n\\toprule\n"
     header += "Method & " + " & ".join(f"{f*100:.0f}\\%" for f in fractions) + " \\\\\n"

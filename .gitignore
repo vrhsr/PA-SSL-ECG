@@ -46,4 +46,7 @@ env/
 
 /experiments/*
 !/experiments/run_all.ps1
+!/experiments/run_paper_pipeline.ps1
+!/experiments/run_smoke_test.ps1
+!/experiments/run_gpu_pipeline.sh
 !/experiments/.gitkeep

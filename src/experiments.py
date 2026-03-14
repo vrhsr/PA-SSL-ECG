@@ -395,11 +395,232 @@ def profile_model(encoder, input_shape=(1, 1, 250), n_forward=100, device=None):
         'n_parameters': n_params,
         'n_trainable': n_trainable,
         'inference_ms': inference_ms,
-        'gpu_memory_mb': gpu_memory_mb,
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. CROSS-DATASET TRANSFER MATRIX
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def cross_dataset_transfer_matrix(checkpoint_path, ptbxl_csv, mitbih_csv, chapman_csv, device=None):
+    """
+    Evaluates cross-dataset generalization. Trains linear probe on dataset A,
+    evaluates on dataset B, producing a 3x3 transfer matrix.
+    """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+    print("\n" + "=" * 60)
+    print("Cross-Dataset Transfer Matrix")
+    print("=" * 60)
+    
+    encoder = build_encoder('resnet1d', proj_dim=128)
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    encoder.load_state_dict(ckpt['encoder_state_dict'])
+    encoder = encoder.to(device)
+    encoder.eval()
+    
+    datasets = {
+        'PTB-XL': ptbxl_csv,
+        'MIT-BIH': mitbih_csv,
+        'Chapman': chapman_csv
     }
     
-    print(f"  Parameters: {n_params:,} ({n_trainable:,} trainable)")
-    print(f"  Inference: {inference_ms:.2f} ms/sample")
-    print(f"  GPU Memory: {gpu_memory_mb:.1f} MB")
+    results = []
     
-    return result
+    for train_name, train_csv in datasets.items():
+        if not os.path.exists(train_csv):
+            continue
+            
+        print(f"\nTraining probe on: {train_name}")
+        train_ds = ECGBeatDataset(train_csv)
+        train_reprs, train_labels = extract_representations(encoder, train_ds, device)
+        
+        from sklearn.linear_model import LogisticRegression
+        clf = LogisticRegression(max_iter=1000, C=1.0)
+        clf.fit(train_reprs, train_labels)
+        
+        for eval_name, eval_csv in datasets.items():
+            if not os.path.exists(eval_csv):
+                continue
+                
+            eval_ds = ECGBeatDataset(eval_csv)
+            eval_reprs, eval_labels = extract_representations(encoder, eval_ds, device)
+            
+            preds = clf.predict(eval_reprs)
+            probs = clf.predict_proba(eval_reprs)
+            
+            acc = accuracy_score(eval_labels, preds)
+            try:
+                if probs.shape[1] == 2:
+                    auroc = roc_auc_score(eval_labels, probs[:, 1])
+                else:
+                    auroc = roc_auc_score(eval_labels, probs, multi_class='ovr')
+            except Exception:
+                auroc = 0.0
+                
+            from src.statistical_tests import bootstrap_confidence_intervals
+            try:
+                ci_lower, ci_upper = bootstrap_confidence_intervals(
+                    eval_labels, probs[:, 1] if probs.shape[1]==2 else probs,
+                    metric_fn=lambda y, p: roc_auc_score(y, p) if probs.shape[1]==2 else roc_auc_score(y, p, multi_class='ovr')
+                )
+            except Exception:
+                ci_lower, ci_upper = np.nan, np.nan
+            
+            results.append({
+                'Source': train_name,
+                'Target': eval_name,
+                'Accuracy': acc,
+                'AUROC': auroc,
+                'AUROC_CI_Lower': ci_lower,
+                'AUROC_CI_Upper': ci_upper
+            })
+            
+    df = pd.DataFrame(results)
+    
+    if len(df) > 0:
+        os.makedirs('experiments/transfer', exist_ok=True)
+        df.to_csv('experiments/transfer/cross_dataset_results.csv', index=False)
+        try:
+            pivot_df = df.pivot(index='Source', columns='Target', values='AUROC')
+            print("\nCross-Dataset AUROC Matrix:")
+            print(pivot_df)
+            
+            header = "\\begin{table}[t]\n\\centering\n\\caption{Cross-Dataset Transfer (AUROC).}\n"
+            targets = pivot_df.columns.tolist()
+            header += f"\\begin{{tabular}}{{l{'c' * len(targets)}}}\n\\toprule\n"
+            header += "Source $\\rightarrow$ Target & " + " & ".join(targets) + " \\\\\n\\midrule\n"
+            
+            rows = []
+            for source in pivot_df.index:
+                cells = [source]
+                for target in targets:
+                    row_data = df[(df['Source'] == source) & (df['Target'] == target)]
+                    if len(row_data) > 0:
+                        auroc = row_data['AUROC'].values[0]
+                        ci_lower = row_data['AUROC_CI_Lower'].values[0]
+                        ci_upper = row_data['AUROC_CI_Upper'].values[0]
+                        if not np.isnan(ci_lower):
+                            cells.append(f"{auroc:.3f} ({ci_lower:.3f}--{ci_upper:.3f})")
+                        else:
+                            cells.append(f"{auroc:.3f}")
+                    else:
+                        cells.append("-")
+                rows.append(" & ".join(cells) + " \\\\")
+                
+            footer = "\\bottomrule\n\\end{tabular}\n\\end{table}"
+            with open('experiments/transfer/transfer_matrix.tex', 'w') as f:
+                f.write(header + "\n".join(rows) + "\n" + footer)
+        except Exception as e:
+            print(f"Skipped latex matrix creation: {e}")
+            
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. PER-AUGMENTATION ABLATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def per_augmentation_ablation(data_csv, epochs=50, device=None):
+    """
+    Automates training and evaluating leave-one-out and leave-one-in configurations.
+    """
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+    print("\n" + "=" * 60)
+    print("Per-Augmentation Ablation Study")
+    print("=" * 60)
+    
+    import multiprocessing
+    from src.train_ssl import train_ssl
+    import collections
+    
+    aug_components = [
+        'constrained_time_warp', 'amplitude_perturbation', 'baseline_wander',
+        'emg_noise_injection', 'heart_rate_resample', 'powerline_interference', 'segment_dropout'
+    ]
+    
+    results = []
+    
+    # Helper to mock argparse for train_ssl
+    class Args:
+        def __init__(self, **kwargs):
+            self.data_file = data_csv
+            self.output_dir = 'experiments/ablations_per_aug'
+            self.encoder = 'resnet1d'
+            self.proj_dim = 128
+            self.augmentation = 'physio'
+            self.aug_strength = 'medium'
+            self.use_temporal = True
+            self.temporal_scales = [1]
+            self.use_metadata = False
+            self.epochs = epochs
+            self.batch_size = 256
+            self.lr = 3e-4
+            self.weight_decay = 1e-4
+            self.temperature = 0.5
+            self.alpha = 1.0
+            self.beta = 0.5
+            self.amp = True
+            self.num_workers = 8 if os.name != 'nt' else 0
+            self.seed = 42
+            self.exclude_aug = None
+            self.only_aug = None
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    os.makedirs('experiments/ablations_per_aug', exist_ok=True)
+    
+    def run_eval(exp_dir, name):
+        ckpt_path = os.path.join(exp_dir, 'best_checkpoint.pth')
+        if not os.path.exists(ckpt_path):
+            return None
+            
+        encoder = build_encoder('resnet1d', proj_dim=128)
+        ckpt = torch.load(ckpt_path, map_location=device)
+        encoder.load_state_dict(ckpt['encoder_state_dict'])
+        encoder = encoder.to(device)
+        encoder.eval()
+        
+        dataset = ECGBeatDataset(data_csv)
+        reprs, labels = extract_representations(encoder, dataset, device)
+        n = len(reprs)
+        train_reprs, train_labels = reprs[:n//2], labels[:n//2]
+        test_reprs, test_labels = reprs[n//2:], labels[n//2:]
+        metrics = linear_probe(train_reprs, train_labels, test_reprs, test_labels)
+        metrics['Configuration'] = name
+        return metrics
+
+    # We outline the configs but actually training them here takes hours.
+    # The user can invoke this to run the suite.
+    configs_to_run = [
+        ('Full PA-SSL', Args(exclude_aug=[])),
+    ]
+    
+    for aug in aug_components:
+        configs_to_run.append((f"w/o {aug}", Args(exclude_aug=[aug])))
+        configs_to_run.append((f"only {aug}", Args(only_aug=[aug])))
+        
+    print(f"Generated {len(configs_to_run)} configurations to train.")
+    print("NOTE: Executing this function will train all models from scratch.")
+    print("      This could take many hours. Consider reducing epochs for speed.")
+    
+    for name, args_obj in configs_to_run:
+        print(f"\n--- Running: {name} ---")
+        try:
+            encoder, exp_dir = train_ssl(args_obj)
+            metrics = run_eval(exp_dir, name)
+            if metrics:
+                results.append(metrics)
+                print(f" -> AUROC: {metrics['auroc']:.4f}")
+        except Exception as e:
+            print(f"Failed configuration {name}: {e}")
+            
+    if results:
+        df = pd.DataFrame(results)
+        df.to_csv('experiments/ablations_per_aug/results.csv', index=False)
+        print(df)
+        return df
+    return None

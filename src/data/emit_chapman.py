@@ -27,7 +27,7 @@ FILTER_LOW = 0.5
 FILTER_HIGH = 40.0
 SOURCE_RATE = 500       # Chapman-Shaoxing native rate
 LEAD_IDX = 1            # Lead II
-DATA_DIR = 'data/chapman-shaoxing'
+DATA_DIR = 'data/chapman/WFDB_ChapmanShaoxing'
 OUTPUT_FILE = 'data/chapman_processed.csv'
 
 # Chapman rhythm labels → binary mapping

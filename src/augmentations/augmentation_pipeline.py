@@ -45,12 +45,14 @@ class PhysioAugPipeline:
         self.augmentations = augmentations
     
     @classmethod
-    def default(cls, strength='medium'):
+    def default(cls, strength='medium', exclude=None, only=None):
         """
         Create default physiology-aware pipeline.
         
         Args:
             strength: 'light', 'medium', or 'strong'
+            exclude: list of function names to exclude (leave-one-out)
+            only: list of function names to exclusively use (leave-one-in)
         """
         configs = {
             'light': {
@@ -89,6 +91,11 @@ class PhysioAugPipeline:
             (wavelet_masking, {'max_mask_ratio': 0.3}, cfg['drop_p']), # Tied to drop probability
         ]
         
+        if exclude:
+            augmentations = [a for a in augmentations if a[0].__name__ not in exclude]
+        if only:
+            augmentations = [a for a in augmentations if a[0].__name__ in only]
+            
         return cls(augmentations)
     
     def __call__(self, signal: np.ndarray, r_peak_pos: int = 125) -> np.ndarray:

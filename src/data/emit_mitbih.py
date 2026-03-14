@@ -18,7 +18,7 @@ FILTER_LOW = 0.5
 FILTER_HIGH = 40.0
 SOURCE_RATE = 360       # MIT-BIH native
 LEAD_IDX = 1            # In CSVs, typically column 0 is index, 1 is MLII
-DATA_DIR = 'data/mitbih'
+DATA_DIR = 'data/mitbh dataset'
 OUTPUT_FILE = 'data/mitbih_processed.csv'
 
 # ─── AAMI MAPPING ────────────────────────────────────────────────────────────

@@ -27,12 +27,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score,
     classification_report, confusion_matrix,
+    average_precision_score
 )
 
 from src.data.ecg_dataset import ECGBeatDataset, patient_aware_split
 from src.models.encoder import build_encoder
 from src.models.anomaly_scorer import (
-    MahalanobisAnomalyScorer, expected_calibration_error, brier_score
+    MahalanobisAnomalyScorer, expected_calibration_error, brier_score,
+    sensitivity_specificity
 )
 
 
@@ -41,7 +43,7 @@ from src.models.anomaly_scorer import (
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
-def extract_representations(encoder, dataset, device, batch_size=256):
+def extract_representations(encoder, dataset, device, batch_size=256, max_batches=None):
     """Extract frozen representations from an encoder for all samples."""
     encoder.eval()
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=2)
@@ -49,7 +51,9 @@ def extract_representations(encoder, dataset, device, batch_size=256):
     all_reprs = []
     all_labels = []
     
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
         signals, labels = batch[0], batch[1]
         signals = signals.to(device)
         reprs = encoder.encode(signals)
@@ -57,6 +61,54 @@ def extract_representations(encoder, dataset, device, batch_size=256):
         all_labels.append(labels.numpy())
     
     return np.concatenate(all_reprs), np.concatenate(all_labels)
+
+
+def representation_quality_metrics(reprs, labels=None):
+    """
+    Computes SSL representation quality metrics.
+    - Silhouette Score: Cluster separation (-1 to 1)
+    - Davies-Bouldin Index: Cluster compactness (lower is better)
+    - Embedding Collapse: Std deviation across dimensions (should be > 0.0)
+    - Uniformity: Average pairwise distance between all points
+    """
+    from sklearn.metrics import silhouette_score, davies_bouldin_score
+    from sklearn.metrics.pairwise import pairwise_distances
+    
+    metrics = {}
+    
+    # Collapse detection
+    feature_stds = np.std(reprs, axis=0)
+    metrics['embedding_std_mean'] = float(np.mean(feature_stds))
+    metrics['embedding_std_min'] = float(np.min(feature_stds))
+    metrics['is_collapsed'] = bool(metrics['embedding_std_mean'] < 1e-4)
+    
+    if len(reprs) > 10000:
+        idx = np.random.choice(len(reprs), 10000, replace=False)
+        sub_reprs = reprs[idx]
+        sub_labels = labels[idx] if labels is not None else None
+    else:
+        sub_reprs = reprs
+        sub_labels = labels if labels is not None else None
+        
+    if len(sub_reprs) > 2000:
+        u_idx = np.random.choice(len(sub_reprs), 2000, replace=False)
+        u_reprs = sub_reprs[u_idx]
+    else:
+        u_reprs = sub_reprs
+        
+    dists = pairwise_distances(u_reprs, metric='sqeuclidean')
+    np.fill_diagonal(dists, 0)
+    metrics['uniformity_l2'] = float(np.sum(dists) / (len(u_reprs) * (len(u_reprs)-1)))
+    
+    if sub_labels is not None and len(np.unique(sub_labels)) > 1:
+        try:
+            metrics['silhouette'] = float(silhouette_score(sub_reprs, sub_labels))
+            metrics['davies_bouldin'] = float(davies_bouldin_score(sub_reprs, sub_labels))
+        except Exception:
+            metrics['silhouette'] = np.nan
+            metrics['davies_bouldin'] = np.nan
+            
+    return metrics
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -77,10 +129,14 @@ def linear_probe(train_reprs, train_labels, test_reprs, test_labels):
     try:
         if probabilities.shape[1] == 2:
             auroc = roc_auc_score(test_labels, probabilities[:, 1])
+            auprc = average_precision_score(test_labels, probabilities[:, 1])
+            sens, spec = sensitivity_specificity(test_labels, probabilities[:, 1])
         else:
             auroc = roc_auc_score(test_labels, probabilities, multi_class='ovr')
+            auprc = average_precision_score(pd.get_dummies(test_labels), probabilities, average='macro')
+            sens, spec = 0.0, 0.0
     except Exception:
-        auroc = 0.0
+        auroc, auprc, sens, spec = 0.0, 0.0, 0.0, 0.0
     
     ece, _ = expected_calibration_error(test_labels, probabilities)
     bs = brier_score(test_labels, probabilities)
@@ -89,6 +145,9 @@ def linear_probe(train_reprs, train_labels, test_reprs, test_labels):
         'accuracy': acc,
         'f1_macro': f1,
         'auroc': auroc,
+        'auprc': auprc,
+        'sensitivity': sens,
+        'specificity': spec,
         'ece': ece,
         'brier_score': bs,
     }
@@ -151,10 +210,14 @@ def fine_tune(encoder, train_dataset, test_dataset, device,
     try:
         if all_probs.shape[1] == 2:
             auroc = roc_auc_score(all_labels, all_probs[:, 1])
+            auprc = average_precision_score(all_labels, all_probs[:, 1])
+            sens, spec = sensitivity_specificity(all_labels, all_probs[:, 1])
         else:
             auroc = roc_auc_score(all_labels, all_probs, multi_class='ovr')
+            auprc = average_precision_score(pd.get_dummies(all_labels), all_probs, average='macro')
+            sens, spec = 0.0, 0.0
     except Exception:
-        auroc = 0.0
+        auroc, auprc, sens, spec = 0.0, 0.0, 0.0, 0.0
     
     ece, _ = expected_calibration_error(all_labels, all_probs)
     bs = brier_score(all_labels, all_probs)
@@ -163,6 +226,9 @@ def fine_tune(encoder, train_dataset, test_dataset, device,
         'accuracy': acc,
         'f1_macro': f1,
         'auroc': auroc,
+        'auprc': auprc,
+        'sensitivity': sens,
+        'specificity': spec,
         'ece': ece,
         'brier_score': bs,
     }
@@ -186,10 +252,14 @@ def mahalanobis_eval(train_reprs, train_labels, test_reprs, test_labels):
     try:
         if probs.shape[1] == 2:
             auroc = roc_auc_score(test_labels, probs[:, 1])
+            auprc = average_precision_score(test_labels, probs[:, 1])
+            sens, spec = sensitivity_specificity(test_labels, probs[:, 1])
         else:
             auroc = roc_auc_score(test_labels, probs, multi_class='ovr')
+            auprc = average_precision_score(pd.get_dummies(test_labels), probs, average='macro')
+            sens, spec = 0.0, 0.0
     except Exception:
-        auroc = 0.0
+        auroc, auprc, sens, spec = 0.0, 0.0, 0.0, 0.0
     
     ece, _ = expected_calibration_error(test_labels, probs)
     bs = brier_score(test_labels, probs)
@@ -198,6 +268,9 @@ def mahalanobis_eval(train_reprs, train_labels, test_reprs, test_labels):
         'accuracy': acc,
         'f1_macro': f1,
         'auroc': auroc,
+        'auprc': auprc,
+        'sensitivity': sens,
+        'specificity': spec,
         'ece': ece,
         'brier_score': bs,
     }
@@ -303,6 +376,26 @@ def evaluate(args):
     val_df.to_csv(os.path.join(split_dir, 'val.csv'), index=False)
     test_df.to_csv(os.path.join(split_dir, 'test.csv'), index=False)
     
+    # ─── Representation Quality Metrics ─────────────────────────────────────
+    print("\n--- Representation Quality Metrics ---")
+    
+    try:
+        test_ds_full = ECGBeatDataset(os.path.join(split_dir, 'test.csv'))
+        reprs_full, labels_full = extract_representations(encoder, test_ds_full, device)
+        
+        rep_metrics = representation_quality_metrics(reprs_full, labels_full)
+        for k, v in rep_metrics.items():
+            if isinstance(v, float):
+                print(f"  {k}: {v:.4f}")
+            else:
+                print(f"  {k}: {v}")
+                
+        # Save representation metrics
+        with open(os.path.join(eval_dir, 'representation_quality.json'), 'w') as f:
+            json.dump(rep_metrics, f, indent=2)
+    except Exception as e:
+        print(f"  Failed to compute representation metrics: {e}")
+        
     # ─── Label Efficiency Experiment ──────────────────────────────────────
     print("\n--- Label Efficiency Experiment ---")
     
@@ -342,12 +435,14 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=str, required=True)
     parser.add_argument('--data_file', type=str, default='data/ptbxl_processed.csv')
     parser.add_argument('--encoder', type=str, default='resnet1d',
-                        choices=['resnet1d', 'wavkan'])
+                        choices=['resnet1d', 'wavkan', 'se_resnet1d34'])
     
     # Label efficiency
     parser.add_argument('--label_fractions', nargs='+', type=float,
                         default=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0])
     parser.add_argument('--n_seeds', type=int, default=3)
+    parser.add_argument('--max_batches', type=int, default=None,
+                        help='Limit number of batches per evaluation (for smoke test)')
     
     args = parser.parse_args()
     evaluate(args)

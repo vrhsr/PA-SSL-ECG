@@ -31,7 +31,7 @@ FILTER_LOW = 0.5        # Bandpass low cutoff (Hz)
 FILTER_HIGH = 40.0      # Bandpass high cutoff (Hz)
 SOURCE_RATE = 100       # PTB-XL native sampling rate (using 100Hz records)
 LEAD_IDX = 1            # Lead II index in 12-lead order (I, II, III...)
-DATA_DIR = 'data/ptb-xl'
+DATA_DIR = r'e:\PhD\PA-SSL-ECG\data\ptb-xl\ptb-xl-a-large-publicly-available-electrocardiography-dataset-1.0.3'
 # Fallback paths for Kaggle downloads
 DATA_DIR_FALLBACKS = [
     'data/ptb-xl',

@@ -79,26 +79,43 @@ class ECGBeatDataset(Dataset):
         for rec_id in self.temporal_index:
             self.temporal_index[rec_id].sort(key=lambda x: x[0])
     
-    def get_temporal_neighbor(self, idx):
+    def get_temporal_neighbor(self, idx, scales=None):
         """
-        Get the index of a temporally adjacent beat (±1 beat from same record).
+        Get the index of a temporally adjacent beat.
+        If scales is provided (e.g., [1, 2, 3]), randomly pick one of those scales
+        to sample a neighbor from that many beats away.
         Returns None if no neighbor exists.
         """
         rec_id = self.record_ids[idx]
         beats = self.temporal_index[rec_id]
         
+        if scales is None:
+            scales = [1]
+        elif isinstance(scales, int):
+            scales = [scales]
+            
+        scale = np.random.choice(scales)
+        
         # Find position of this beat in the record's beat list
         for pos, (beat_idx, global_idx) in enumerate(beats):
             if global_idx == idx:
-                # Pick adjacent beat (prefer next, fallback to previous)
                 candidates = []
-                if pos + 1 < len(beats):
-                    candidates.append(beats[pos + 1][1])
-                if pos - 1 >= 0:
-                    candidates.append(beats[pos - 1][1])
+                if pos + scale < len(beats):
+                    candidates.append(beats[pos + scale][1])
+                if pos - scale >= 0:
+                    candidates.append(beats[pos - scale][1])
                 
                 if candidates:
                     return candidates[np.random.randint(len(candidates))]
+                elif scale != 1:
+                    # Fallback to scale=1 if requested scale is not available
+                    candidates_fb = []
+                    if pos + 1 < len(beats):
+                        candidates_fb.append(beats[pos + 1][1])
+                    if pos - 1 >= 0:
+                        candidates_fb.append(beats[pos - 1][1])
+                    if candidates_fb:
+                        return candidates_fb[np.random.randint(len(candidates_fb))]
                 return None
         return None
     
@@ -123,16 +140,18 @@ class SSLECGDataset(Dataset):
     """
     
     def __init__(self, base_dataset, augmentation_pipeline=None, 
-                 use_temporal_positives=True):
+                 use_temporal_positives=True, temporal_scales=None):
         """
         Args:
             base_dataset: ECGBeatDataset instance
             augmentation_pipeline: Callable that takes (signal, r_peak_pos) → augmented signal
             use_temporal_positives: Whether to include temporal adjacency positives
+            temporal_scales: List of scales (e.g. [1, 2, 3]) for temporal neighbors
         """
         self.base = base_dataset
         self.augment = augmentation_pipeline
         self.use_temporal = use_temporal_positives
+        self.temporal_scales = temporal_scales if temporal_scales is not None else [1]
     
     def __len__(self):
         return len(self.base)
@@ -174,7 +193,7 @@ class SSLECGDataset(Dataset):
         
         # Temporal positive
         if self.use_temporal:
-            neighbor_idx = self.base.get_temporal_neighbor(idx)
+            neighbor_idx = self.base.get_temporal_neighbor(idx, scales=self.temporal_scales)
             if neighbor_idx is not None:
                 neighbor_signal = self.base.X[neighbor_idx].copy()
                 neighbor_rpeak = self.base.r_peak_positions[neighbor_idx]

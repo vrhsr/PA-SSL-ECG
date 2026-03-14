@@ -15,7 +15,7 @@ Usage:
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 import numpy as np
 import argparse
 import os
@@ -68,6 +68,8 @@ def train_ssl(args):
     print(f"  Encoder: {args.encoder}")
     print(f"  Augmentation: {args.augmentation}")
     print(f"  Temporal positives: {args.use_temporal}")
+    if args.use_temporal:
+        print(f"  Temporal scales: {args.temporal_scales}")
     print(f"  Epochs: {args.epochs}")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.lr}")
@@ -78,7 +80,11 @@ def train_ssl(args):
     
     # Augmentation pipeline
     if args.augmentation == 'physio':
-        aug_pipeline = PhysioAugPipeline.default(strength=args.aug_strength)
+        aug_pipeline = PhysioAugPipeline.default(
+            strength=args.aug_strength, 
+            exclude=args.exclude_aug, 
+            only=args.only_aug
+        )
         print(f"Using Physiology-Aware Augmentations ({args.aug_strength})")
         print(aug_pipeline)
     elif args.augmentation == 'naive':
@@ -92,6 +98,7 @@ def train_ssl(args):
         base_dataset,
         augmentation_pipeline=aug_pipeline,
         use_temporal_positives=args.use_temporal,
+        temporal_scales=args.temporal_scales,
     )
     
     # PyTorch DataLoader optimization for Windows: Keep workers alive across epochs
@@ -147,10 +154,11 @@ def train_ssl(args):
         temperature=args.temperature,
         alpha=args.alpha,
         beta=args.beta if args.use_temporal else 0.0,
+        loss_type=args.loss_type,
     )
     
     # ─── Mixed Precision ──────────────────────────────────────────────────
-    scaler = GradScaler() if args.amp else None
+    scaler = GradScaler('cuda') if args.amp else None
     
     # ─── Output Directory ─────────────────────────────────────────────────
     exp_name = f"ssl_{args.encoder}_{args.augmentation}"
@@ -227,6 +235,8 @@ def train_ssl(args):
                     disable=(not is_interactive))
         
         for batch_idx, batch in enumerate(pbar):
+            if args.max_batches is not None and batch_idx >= args.max_batches:
+                break
             view1 = batch['view1'].to(device)
             view2 = batch['view2'].to(device)
             
@@ -244,7 +254,7 @@ def train_ssl(args):
             optimizer.zero_grad()
             
             if args.amp:
-                with autocast():
+                with autocast('cuda'):
                     z1 = encoder(view1, return_projection=True, metadata=metadata)
                     z2 = encoder(view2, return_projection=True, metadata=metadata)
                     z_temp = encoder(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
@@ -339,7 +349,7 @@ if __name__ == "__main__":
     
     # Model
     parser.add_argument('--encoder', type=str, default='resnet1d', 
-                        choices=['resnet1d', 'wavkan'])
+                        choices=['resnet1d', 'wavkan', 'se_resnet1d34'])
     parser.add_argument('--proj_dim', type=int, default=128)
     
     # Augmentation
@@ -347,8 +357,14 @@ if __name__ == "__main__":
                         choices=['physio', 'naive', 'none'])
     parser.add_argument('--aug_strength', type=str, default='medium',
                         choices=['light', 'medium', 'strong'])
+    parser.add_argument('--exclude_aug', nargs='+', type=str, default=None,
+                        help='Specific augmentations to exclude (e.g., constrained_time_warp)')
+    parser.add_argument('--only_aug', nargs='+', type=str, default=None,
+                        help='Specific augmentations to exclusively include')
     parser.add_argument('--use_temporal', action='store_true', default=True)
     parser.add_argument('--no_temporal', dest='use_temporal', action='store_false')
+    parser.add_argument('--temporal_scales', nargs='+', type=int, default=[1],
+                        help='Number of beats away to sample temporal positives (e.g., 1 2 3)')
     parser.add_argument('--use_metadata', action='store_true', default=False,
                         help='Condition projection head on patient demography (Phase 9)')
     
@@ -358,6 +374,9 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
     parser.add_argument('--temperature', type=float, default=0.5)
+    parser.add_argument('--loss_type', type=str, default='ntxent',
+                        choices=['ntxent', 'vicreg', 'barlow'],
+                        help='Contrastive objective to use')
     parser.add_argument('--alpha', type=float, default=1.0,
                         help='Weight for augmentation contrastive loss')
     parser.add_argument('--beta', type=float, default=0.5,
@@ -376,11 +395,15 @@ if __name__ == "__main__":
     # Quick test
     parser.add_argument('--quick_test', action='store_true',
                         help='Run 2 epochs for smoke testing')
+    parser.add_argument('--max_batches', type=int, default=None,
+                        help='Limit number of batches per epoch (for smoke test)')
     
     args = parser.parse_args()
     
     if args.quick_test:
         args.epochs = 2
         args.batch_size = 32
+        if args.max_batches is None:
+            args.max_batches = 10
     
     train_ssl(args)

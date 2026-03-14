@@ -189,6 +189,112 @@ def visualize_physio_vs_naive(save_path=None):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# VALIDITY METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def qrs_preservation_metric(original, augmented, r_peak_pos=125, qrs_width=QRS_HALF_WIDTH):
+    """
+    Computes Pearson correlation between the QRS complex of original and augmented signals.
+    A higher value (>0.95) indicates the augmentation successfully preserved clinical morphology.
+    """
+    start = max(0, r_peak_pos - qrs_width)
+    end = min(len(original), r_peak_pos + qrs_width)
+    
+    orig_qrs = original[start:end]
+    aug_qrs = augmented[start:end]
+    
+    if np.std(orig_qrs) < 1e-6 or np.std(aug_qrs) < 1e-6:
+        return 0.0
+        
+    corr = np.corrcoef(orig_qrs, aug_qrs)[0, 1]
+    return float(corr) if not np.isnan(corr) else 0.0
+
+
+def signal_distortion_ratio(original, augmented):
+    """
+    Computes Signal-to-Distortion Ratio (SDR) in dB.
+    Quantifies the overall strength of the augmentation.
+    """
+    noise = augmented - original
+    signal_power = np.mean(original ** 2)
+    noise_power = np.mean(noise ** 2)
+    
+    if noise_power < 1e-10:
+        return float('inf')
+        
+    return float(10 * np.log10(signal_power / noise_power))
+
+
+def qrs_duration_error(original, augmented, r_peak_pos=125, fs=100):
+    """
+    Computes absolute error in QRS duration (ms) between original and augmented signals.
+    Approximates the duration within R ± 40ms by measuring width above 10% threshold.
+    """
+    window_ms = 40
+    window_samples = int(window_ms * fs / 1000)
+    
+    start = max(0, r_peak_pos - window_samples)
+    end = min(len(original), r_peak_pos + window_samples)
+    
+    def get_duration(sig):
+        window_sig = sig[start:end]
+        max_val = np.max(np.abs(window_sig))
+        if max_val < 1e-6:
+            return 0.0
+        # 10% threshold to find onset/offset within window
+        threshold = 0.1 * max_val  
+        above_thresh = np.where(np.abs(window_sig) > threshold)[0]
+        if len(above_thresh) < 2:
+            return 0.0
+        return (above_thresh[-1] - above_thresh[0]) * 1000 / fs
+
+    orig_dur = get_duration(original)
+    aug_dur = get_duration(augmented)
+    
+    return abs(orig_dur - aug_dur)
+
+
+def rpeak_amplitude_difference(original, augmented, r_peak_pos=125):
+    """
+    Computes absolute difference in R-peak amplitude normalized by original signal standard deviation.
+    """
+    window = 5
+    start = max(0, r_peak_pos - window)
+    end = min(len(original), r_peak_pos + window)
+    
+    orig_r = np.max(original[start:end])
+    aug_r = np.max(augmented[start:end])
+    
+    orig_std = np.std(original)
+    if orig_std < 1e-6:
+        return 0.0
+        
+    return float(abs(orig_r - aug_r) / orig_std)
+
+
+def qrs_preservation_comparison(original, augmented_signals, aug_names, r_peak_pos=125):
+    """
+    Runs all 3 metrics on each augmented signal and returns a DataFrame.
+    """
+    import pandas as pd
+    results = []
+    
+    for aug, name in zip(augmented_signals, aug_names):
+        corr = qrs_preservation_metric(original, aug, r_peak_pos)
+        dur_err = qrs_duration_error(original, aug, r_peak_pos)
+        r_diff = rpeak_amplitude_difference(original, aug, r_peak_pos)
+        
+        results.append({
+            'Augmentation': name,
+            'QRS corr': corr,
+            'Δduration (ms)': dur_err,
+            'ΔR (norm)': r_diff
+        })
+        
+    return pd.DataFrame(results)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # UNIT TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -271,6 +377,27 @@ def run_augmentation_tests():
     print(f"  {status}  PhysioAugPipeline (end-to-end)")
     passed += 1 if pipe_pass else 0
     failed += 0 if pipe_pass else 1
+    
+    # Test validity metrics
+    print("\n  Testing Validity Metrics...")
+    physio_aug = amplitude_perturbation(signal.copy(), r_peak, scale_range=(0.8, 1.2), qrs_protect=True)
+    naive_pipe = NaiveAugPipeline(p=1.0)
+    # create a strong naive augmentation to break QRS
+    naive_aug = naive_pipe.naive_amplitude_scale(signal.copy(), scale_range=(0.1, 2.0))
+    
+    qrs_physio = qrs_preservation_metric(signal, physio_aug, r_peak)
+    sdr_physio = signal_distortion_ratio(signal, physio_aug)
+    qrs_naive = qrs_preservation_metric(signal, naive_aug, r_peak)
+    sdr_naive = signal_distortion_ratio(signal, naive_aug)
+    
+    print(f"    Physio: QRS corr={qrs_physio:.4f}, SDR={sdr_physio:.2f}dB")
+    print(f"    Naive:  QRS corr={qrs_naive:.4f}, SDR={sdr_naive:.2f}dB")
+    
+    metrics_pass = (qrs_physio > 0.95)
+    status = "✓ PASS" if metrics_pass else "✗ FAIL"
+    print(f"  {status}  QRS Preservation Metric")
+    if metrics_pass: passed += 1
+    else: failed += 1
     
     print(f"\nResults: {passed} passed, {failed} failed")
     return failed == 0

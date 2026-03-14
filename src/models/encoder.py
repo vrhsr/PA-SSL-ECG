@@ -284,6 +284,133 @@ class WavKANEncoder(nn.Module):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SE-RESNET1D-34 ENCODER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SqueezeExcitation1D(nn.Module):
+    """Squeeze-and-Excitation block for 1D signals."""
+    def __init__(self, channel, reduction=16):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1)
+        return x * y.expand_as(x)
+
+class SEResBlock1D(nn.Module):
+    """Residual block for 1D signals with Squeeze-and-Excitation."""
+    
+    def __init__(self, in_channels, out_channels, stride=1, reduction=16):
+        super().__init__()
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=7, 
+                               stride=stride, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm1d(out_channels)
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=7, 
+                               stride=1, padding=3, bias=False)
+        self.bn2 = nn.BatchNorm1d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.se = SqueezeExcitation1D(out_channels, reduction)
+        
+        self.downsample = None
+        if stride != 1 or in_channels != out_channels:
+            self.downsample = nn.Sequential(
+                nn.Conv1d(in_channels, out_channels, kernel_size=1, 
+                         stride=stride, bias=False),
+                nn.BatchNorm1d(out_channels)
+            )
+    
+    def forward(self, x):
+        identity = x
+        if self.downsample is not None:
+            identity = self.downsample(x)
+        
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out = self.se(out)
+        out += identity
+        return self.relu(out)
+
+class SEResNet1D34Encoder(nn.Module):
+    """
+    1D SE-ResNet-34 encoder for ECG signals.
+    
+    Architecture: Conv stem → 4 layers of SE-ResBlocks (3, 4, 6, 3) → Global Average Pool → repr_dim
+    Output dimension: 512
+    """
+    
+    def __init__(self, in_channels=1, repr_dim=512, proj_dim=128, **kwargs):
+        super().__init__()
+        
+        self.repr_dim = repr_dim
+        
+        # Convolutional stem
+        self.stem = nn.Sequential(
+            nn.Conv1d(in_channels, 64, kernel_size=15, stride=2, padding=7, bias=False),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
+        )
+        
+        # Residual layers (34-layer equivalent: 3, 4, 6, 3 blocks)
+        self.layer1 = self._make_layer(64, 64, 3, stride=1)
+        self.layer2 = self._make_layer(64, 128, 4, stride=2)
+        self.layer3 = self._make_layer(128, 256, 6, stride=2)
+        self.layer4 = self._make_layer(256, repr_dim, 3, stride=2)
+        
+        # Global average pooling
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        
+        # Projection head (for SSL)
+        self.projection_head = ProjectionHead(repr_dim, hidden_dim=256, output_dim=proj_dim, metadata_dim=kwargs.get('metadata_dim', 0))
+        
+        # Classification head (for downstream)
+        self.classifier = None
+    
+    def _make_layer(self, in_channels, out_channels, blocks, stride):
+        layers = []
+        layers.append(SEResBlock1D(in_channels, out_channels, stride))
+        for _ in range(1, blocks):
+            layers.append(SEResBlock1D(out_channels, out_channels))
+        return nn.Sequential(*layers)
+        
+    def set_classifier(self, num_classes):
+        self.classifier = nn.Linear(self.repr_dim, num_classes)
+        return self
+    
+    def encode(self, x):
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        
+        x = self.stem(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        return x
+    
+    def forward(self, x, return_projection=False, metadata=None):
+        h = self.encode(x)
+        
+        if return_projection:
+            return self.projection_head(h, metadata)
+        
+        if self.classifier is not None:
+            return self.classifier(h)
+        
+        return h
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # FACTORY
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -297,6 +424,7 @@ def build_encoder(name='resnet1d', **kwargs):
     """
     encoders = {
         'resnet1d': ResNet1DEncoder,
+        'se_resnet1d34': SEResNet1D34Encoder,
         'wavkan': WavKANEncoder,
     }
     
