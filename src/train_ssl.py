@@ -26,6 +26,7 @@ from tqdm import tqdm
 
 from src.data.ecg_dataset import ECGBeatDataset, SSLECGDataset
 from src.models.encoder import build_encoder
+from src.models.mae import HybridMAE
 from src.losses import CombinedContrastiveLoss
 from src.augmentations.augmentation_pipeline import PhysioAugPipeline
 from src.augmentations.naive_augmentations import NaiveAugPipeline
@@ -93,20 +94,30 @@ def train_ssl(args):
     else:
         aug_pipeline = None
         print("No augmentations (identity baseline)")
-    
-    ssl_dataset = SSLECGDataset(
-        base_dataset,
+      # Load primary SSL dataset
+    print(f"\nLoading SSL Dataset: {args.data_file}")
+    full_dataset = SSLECGDataset(
+        data_file=args.data_file, 
         augmentation_pipeline=aug_pipeline,
         use_temporal_positives=args.use_temporal,
-        temporal_scales=args.temporal_scales,
+        temporal_scales=args.temporal_scales
     )
+    
+    # 11.7 Pretraining Scale: Use a fraction of the unlabeled data if requested
+    if args.data_fraction < 1.0:
+        n_scaled = int(len(full_dataset) * args.data_fraction)
+        print(f"  Scaling: Using {args.data_fraction*100:.1f}% of data ({n_scaled}/{len(full_dataset)})")
+        indices = np.random.choice(len(full_dataset), n_scaled, replace=False)
+        dataset = torch.utils.data.Subset(full_dataset, indices)
+    else:
+        dataset = full_dataset
     
     # PyTorch DataLoader optimization for Windows: Keep workers alive across epochs
     # to prevent the massive delay when recreating processes CPU-side.
     prefetch = max(2, 16 // max(1, args.num_workers)) if args.num_workers > 0 else None
     
     loader = DataLoader(
-        ssl_dataset,
+        dataset,
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
@@ -121,8 +132,16 @@ def train_ssl(args):
     metadata_dim = 4 if args.use_metadata else 0
     encoder = build_encoder(args.encoder, proj_dim=args.proj_dim, metadata_dim=metadata_dim).to(device)
     
-    n_params = sum(p.numel() for p in encoder.parameters())
-    print(f"Encoder parameters: {n_params:,}")
+    if args.ssl_mode in ['mae', 'hybrid']:
+        model = HybridMAE(encoder, mask_ratio=args.mask_ratio, qrs_avoidance_prob=args.qrs_avoid_prob).to(device)
+        model_params = model.parameters()
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"Hybrid MAE Model parameters: {n_params:,}")
+    else:
+        model = encoder
+        model_params = encoder.parameters()
+        n_params = sum(p.numel() for p in encoder.parameters())
+        print(f"Encoder parameters: {n_params:,}")
     
     # GPU optimization
     if torch.cuda.is_available():
@@ -133,7 +152,7 @@ def train_ssl(args):
     
     # ─── Optimizer ────────────────────────────────────────────────────────
     optimizer = optim.AdamW(
-        encoder.parameters(),
+        model_params,
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
@@ -175,7 +194,7 @@ def train_ssl(args):
     # Save config
     config = vars(args)
     config['n_params'] = n_params
-    config['n_samples'] = len(ssl_dataset)
+    config['n_samples'] = len(dataset) # Use 'dataset' which might be a Subset
     with open(os.path.join(exp_dir, 'config.json'), 'w') as f:
         json.dump(config, f, indent=2)
     
@@ -202,7 +221,14 @@ def train_ssl(args):
             ckpt_path = os.path.join(exp_dir, latest_ckpt)
             print(f"Resuming from checkpoint: {ckpt_path}")
             ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-            encoder.load_state_dict(ckpt['encoder_state_dict'])
+            if args.ssl_mode in ['mae', 'hybrid']:
+                if 'model_state_dict' in ckpt:
+                    model.load_state_dict(ckpt['model_state_dict'])
+                else:
+                    # Fallback to load encoder only
+                    model.encoder.load_state_dict(ckpt['encoder_state_dict'], strict=False)
+            else:
+                model.load_state_dict(ckpt['encoder_state_dict'])
             if 'optimizer_state_dict' in ckpt:
                 optimizer.load_state_dict(ckpt['optimizer_state_dict'])
             start_epoch = ckpt['epoch']
@@ -223,12 +249,34 @@ def train_ssl(args):
                 except Exception as e:
                     print(f"  Warning: Could not load history.json ({e})")
     
+    # Compute Efficiency Logger (11.8)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"\nModel Efficiency Summary:")
+    print(f"  Total Parameters:     {total_params/1e6:.3f}M")
+    print(f"  Trainable Parameters: {trainable_params/1e6:.3f}M")
+    print(f"  Device:               {device}")
+    
+    # 2.4 Resumption/Stability Logging
+    batch_history = [] # For finer stability curves
+    
+    print(f"\nStarting Pretraining ({args.epochs} epochs)...")
+    start_time_total = time.time()
+    
     for epoch in range(start_epoch, args.epochs):
-        encoder.train()
+        epoch_start_time = time.time()
+        model.train()
         running_loss = 0.0
         running_loss_aug = 0.0
         running_loss_temp = 0.0
+        running_loss_mae = 0.0
         n_total = len(loader)
+        
+        # MAE loss warmup: ramp λ from 0 → mae_weight over mae_warmup_epochs
+        if args.ssl_mode == 'hybrid' and hasattr(args, 'mae_warmup_epochs') and args.mae_warmup_epochs > 0:
+            mae_lambda = args.mae_weight * min(1.0, (epoch + 1) / args.mae_warmup_epochs)
+        else:
+            mae_lambda = args.mae_weight
         
         # Only show tqdm progress bar in interactive terminals (not file redirect)
         pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}",
@@ -253,38 +301,74 @@ def train_ssl(args):
             
             optimizer.zero_grad()
             
+            def compute_batch_loss():
+                loss, loss_aug, loss_temp, loss_mae = 0.0, torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
+                
+                # 1. Contrastive Path
+                if args.ssl_mode in ['contrastive', 'hybrid']:
+                    enc_model = model.encoder if args.ssl_mode == 'hybrid' else model
+                    z1 = enc_model(view1, return_projection=True, metadata=metadata)
+                    z2 = enc_model(view2, return_projection=True, metadata=metadata)
+                    z_temp = enc_model(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
+                    loss_c, loss_aug, loss_temp = criterion(z1, z2, z_temp, has_temporal)
+                    loss += loss_c
+                
+                # 2. MAE Path
+                if args.ssl_mode in ['mae', 'hybrid']:
+                    recon_x, masks, masked_x = model.forward_mae(view1)
+                    # MSE only on masked patches
+                    masks_expanded = masks.unsqueeze(1).expand_as(view1)
+                    if masks_expanded.sum() > 0:
+                        loss_mae = torch.nn.functional.mse_loss(
+                            recon_x[masks_expanded], view1[masks_expanded]
+                        )
+                    else:
+                        loss_mae = torch.tensor(0.0, device=device)
+                    
+                    if args.ssl_mode == 'mae':
+                        loss += loss_mae
+                    else:
+                        loss += mae_lambda * loss_mae
+                        
+                # Just in case loss is 0 (float), convert it assuming it has valid grads
+                if isinstance(loss, float):
+                    loss = torch.tensor(loss, device=device, requires_grad=True)
+                    
+                return loss, loss_aug, loss_temp, loss_mae
+            
             if args.amp:
                 with autocast('cuda'):
-                    z1 = encoder(view1, return_projection=True, metadata=metadata)
-                    z2 = encoder(view2, return_projection=True, metadata=metadata)
-                    z_temp = encoder(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
-                    
-                    loss, loss_aug, loss_temp = criterion(z1, z2, z_temp, has_temporal)
-                
+                    loss, loss_aug, loss_temp, loss_mae = compute_batch_loss()
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                z1 = encoder(view1, return_projection=True, metadata=metadata)
-                z2 = encoder(view2, return_projection=True, metadata=metadata)
-                z_temp = encoder(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
-                
-                loss, loss_aug, loss_temp = criterion(z1, z2, z_temp, has_temporal)
-                
+                loss, loss_aug, loss_temp, loss_mae = compute_batch_loss()
                 loss.backward()
                 optimizer.step()
-            
+            # Log batch for stability curves (every 10 batches to save memory)
+            if batch_idx % 10 == 0:
+                batch_history.append({
+                    'epoch': epoch + 1,
+                    'batch': batch_idx,
+                    'loss': loss.item(),
+                    'loss_aug': loss_aug.item(),
+                    'loss_mae': loss_mae.item()
+                })
+                
             running_loss += loss.item()
             running_loss_aug += loss_aug.item()
             running_loss_temp += loss_temp.item()
+            running_loss_mae += loss_mae.item()
             
             if is_interactive:
-                pbar.set_postfix({
-                    'loss': f'{loss.item():.4f}',
-                    'aug': f'{loss_aug.item():.4f}',
-                    'temp': f'{loss_temp.item():.4f}',
-                    'lr': f'{scheduler.get_last_lr()[0]:.6f}',
-                })
+                pbar_dict = {'loss': f'{loss.item():.4f}'}
+                if args.ssl_mode in ['contrastive', 'hybrid']:
+                    pbar_dict['aug'] = f'{loss_aug.item():.4f}'
+                    if args.use_temporal: pbar_dict['tmp'] = f'{loss_temp.item():.4f}'
+                if args.ssl_mode in ['mae', 'hybrid']:
+                    pbar_dict['mae'] = f'{loss_mae.item():.4f}'
+                pbar.set_postfix(pbar_dict)
         
         scheduler.step()
         
@@ -293,32 +377,40 @@ def train_ssl(args):
         epoch_loss = running_loss / n_batches
         epoch_loss_aug = running_loss_aug / n_batches
         epoch_loss_temp = running_loss_temp / n_batches
+        epoch_loss_mae = running_loss_mae / n_batches
+        epoch_duration = time.time() - epoch_start_time
         
         history.append({
             'epoch': epoch + 1,
             'loss': epoch_loss,
             'loss_aug': epoch_loss_aug,
+            'loss_temp': epoch_loss_temp,
+            'loss_mae': epoch_loss_mae,
             'loss_temporal': epoch_loss_temp,
             'lr': scheduler.get_last_lr()[0],
+            'epoch_duration': epoch_duration,
         })
         
-        print(f"Epoch {epoch+1}: loss={epoch_loss:.4f} "
+        # Log basic stats
+        print(f"Epoch {epoch+1} Complete | Loss: {epoch_loss:.4f} | Time: {epoch_duration:.1f}s "
               f"(aug={epoch_loss_aug:.4f}, temp={epoch_loss_temp:.4f})")
         
         # Save checkpoint
         if epoch_loss < best_loss:
             best_loss = epoch_loss
-            torch.save({
+            checkpoint_data = {
                 'epoch': epoch + 1,
-                'encoder_state_dict': encoder.state_dict(),
+                'encoder_state_dict': model.encoder.state_dict() if args.ssl_mode in ['mae', 'hybrid'] else model.state_dict(),
+                'model_state_dict': model.state_dict() if args.ssl_mode in ['mae', 'hybrid'] else None,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': epoch_loss,
-                'config': config,
-            }, os.path.join(exp_dir, 'best_checkpoint.pth'))
+                'args': vars(args)
+            }
+            torch.save(checkpoint_data, os.path.join(exp_dir, 'best_checkpoint.pth'))
             print(f"  > New best model saved (loss={best_loss:.4f})")
         
         # Periodic checkpoint
-        if (epoch + 1) % 20 == 0:
+        if (epoch + 1) % args.save_every == 0:
             torch.save({
                 'epoch': epoch + 1,
                 'encoder_state_dict': encoder.state_dict(),
@@ -328,7 +420,7 @@ def train_ssl(args):
             
         # Save training history iteratively
         with open(os.path.join(exp_dir, 'history.json'), 'w') as f:
-            json.dump(history, f, indent=2)
+            json.dump({'epochs': history, 'batches': batch_history}, f, indent=2)
 
     
     print(f"\n{'='*60}")
@@ -349,7 +441,7 @@ if __name__ == "__main__":
     
     # Model
     parser.add_argument('--encoder', type=str, default='resnet1d', 
-                        choices=['resnet1d', 'wavkan', 'se_resnet1d34'])
+                        choices=['resnet1d', 'wavkan'])
     parser.add_argument('--proj_dim', type=int, default=128)
     
     # Augmentation
@@ -391,6 +483,27 @@ if __name__ == "__main__":
     # Reproducibility
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility')
+    
+    # MAE & Hybrid Settings
+    parser.add_argument('--ssl_mode', type=str, default='contrastive',
+                        choices=['contrastive', 'mae', 'hybrid'],
+                        help='Pretraining objective: Contrastive only, MAE only, or Hybrid')
+    parser.add_argument('--mask_ratio', type=float, default=0.60,
+                        help='Ratio of sequence to mask in MAE mode (0.60 recommended)')
+    parser.add_argument('--qrs_avoid_prob', type=float, default=0.8,
+                        help='Probability of strictly avoiding the QRS region during masking')
+    parser.add_argument('--mae_weight', type=float, default=1.0,
+                        help='Peak weight for MAE loss in Hybrid mode')
+    parser.add_argument('--mae_warmup_epochs', type=int, default=10,
+                        help='Number of epochs to linearly ramp MAE weight from 0 to mae_weight')
+    
+    # Execution Safety
+    parser.add_argument('--save_every', type=int, default=20,
+                        help='Save a periodic checkpoint every N epochs')
+    
+    # Pretraining Scale
+    parser.add_argument('--data_fraction', type=float, default=1.0,
+                        help='Fraction of unlabeled data to use (0.0 to 1.0) for scaling experiments')
     
     # Quick test
     parser.add_argument('--quick_test', action='store_true',

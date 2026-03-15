@@ -91,36 +91,6 @@ class VICRegLoss(nn.Module):
         loss = self.sim_coeff * repr_loss + self.std_coeff * std_loss + self.cov_coeff * cov_loss
         return loss
 
-class BarlowTwinsLoss(nn.Module):
-    """
-    Barlow Twins cross-correlation loss.
-    """
-    def __init__(self, lambd=0.0051):
-        super().__init__()
-        self.lambd = lambd
-
-    def off_diagonal(self, x):
-        n, m = x.shape
-        assert n == m
-        return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
-
-    def forward(self, z_i, z_j):
-        N = z_i.size(0)
-        D = z_i.size(1)
-
-        # normalize repr. along the batch dimension
-        z_i_norm = (z_i - z_i.mean(0)) / (z_i.std(0) + 1e-5)
-        z_j_norm = (z_j - z_j.mean(0)) / (z_j.std(0) + 1e-5)
-
-        # cross-correlation matrix
-        c = (z_i_norm.T @ z_j_norm) / N
-
-        # loss
-        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-        off_diag = self.off_diagonal(c).pow_(2).sum()
-        loss = on_diag + self.lambd * off_diag
-        return loss
-
 class CombinedContrastiveLoss(nn.Module):
     """
     Combined contrastive loss for PA-SSL.
@@ -136,7 +106,7 @@ class CombinedContrastiveLoss(nn.Module):
             temperature: Temperature for NT-Xent
             alpha: Weight for augmentation contrast
             beta: Weight for temporal contrast
-            loss_type: 'ntxent', 'vicreg', or 'barlow'
+            loss_type: 'ntxent' or 'vicreg'
         """
         super().__init__()
         self.loss_type = loss_type
@@ -144,8 +114,6 @@ class CombinedContrastiveLoss(nn.Module):
             self.aug_loss_fn = NTXentLoss(temperature)
         elif loss_type == 'vicreg':
             self.aug_loss_fn = VICRegLoss()
-        elif loss_type == 'barlow':
-            self.aug_loss_fn = BarlowTwinsLoss()
         else:
             raise ValueError(f"Unknown loss_type: {loss_type}")
             
@@ -160,9 +128,6 @@ class CombinedContrastiveLoss(nn.Module):
             z_view2: (B, D) projections from augmented view 2
             z_temporal: (B, D) projections from temporal neighbor (optional)
             has_temporal: (B,) boolean mask indicating valid temporal pairs
-        
-        Returns:
-            total_loss, loss_aug, loss_temporal
         """
         # Augmentation contrastive loss (always computed)
         loss_aug = self.aug_loss_fn(z_view1, z_view2)

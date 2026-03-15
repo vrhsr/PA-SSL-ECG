@@ -80,10 +80,10 @@ class ResNet1DEncoder(nn.Module):
     1D ResNet encoder for ECG signals.
     
     Architecture: Conv stem → 4 ResBlocks → Global Average Pool → repr_dim
-    Output dimension: 512
+    Output dimension: 256 (default)
     """
     
-    def __init__(self, in_channels=1, repr_dim=512, proj_dim=128, **kwargs):
+    def __init__(self, in_channels=1, repr_dim=256, proj_dim=128, **kwargs):
         super().__init__()
         
         self.repr_dim = repr_dim
@@ -191,7 +191,14 @@ class WaveletLinear(nn.Module):
 class Conv1DStem(nn.Module):
     """Lightweight 1D CNN feature extractor preserving temporal structure."""
     
-    def __init__(self, out_dim=64):
+    def __init__(self, out_dim=64, bottleneck_dim=None):
+        """
+        Args:
+            out_dim: Controls adaptive pool size (pool_size = out_dim // 4)
+            bottleneck_dim: If provided, adds a Linear bottleneck to compress
+                           the flattened features down to this dimension.
+                           CRITICAL for WavKAN parity with ResNet.
+        """
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv1d(1, 32, kernel_size=7, stride=1, padding=3),
@@ -207,32 +214,47 @@ class Conv1DStem(nn.Module):
             nn.GELU(),
             nn.AdaptiveAvgPool1d(out_dim // 4),
         )
-        self.out_features = 128 * (out_dim // 4)
+        raw_features = 128 * (out_dim // 4)
+        
+        if bottleneck_dim is not None:
+            self.bottleneck = nn.Sequential(
+                nn.Linear(raw_features, bottleneck_dim),
+                nn.GELU(),
+            )
+            self.out_features = bottleneck_dim
+        else:
+            self.bottleneck = None
+            self.out_features = raw_features
     
     def forward(self, x):
         if x.dim() == 2:
             x = x.unsqueeze(1)
         features = self.stem(x)
-        return features.view(features.size(0), -1)
+        features = features.view(features.size(0), -1)
+        if self.bottleneck is not None:
+            features = self.bottleneck(features)
+        return features
 
 
 class WavKANEncoder(nn.Module):
     """
     WavKAN encoder for ECG signals.
     
-    Architecture: Conv1D stem → WaveletLinear layers → repr_dim
-    Output dimension: 64 (configurable via hidden_dim)
+    Architecture: Conv1D stem (with bottleneck) → WaveletLinear layers → repr_dim
+    Output dimension: 256 (configurable via repr_dim)
     """
     
-    def __init__(self, input_dim=250, repr_dim=64, depth=3,
+    def __init__(self, input_dim=250, repr_dim=256, depth=3,
                  wavelet_type='mexican_hat', proj_dim=128, **kwargs):
         super().__init__()
         
         self.repr_dim = repr_dim
         
-        # Conv1D stem
-        self.conv_stem = Conv1DStem(out_dim=repr_dim)
-        kan_input_dim = self.conv_stem.out_features
+        # Conv1D stem with bottleneck to compress features before WaveletLinear
+        # Without bottleneck: 128*64=8192 → WaveletLinear(8192,256) = 6.3M params
+        # With bottleneck:    8192 → Linear → repr_dim → WaveletLinear(repr_dim,repr_dim) = ~200K params
+        self.conv_stem = Conv1DStem(out_dim=repr_dim, bottleneck_dim=repr_dim)
+        kan_input_dim = self.conv_stem.out_features  # = repr_dim after bottleneck
         
         # WaveletLinear layers
         self.layers = nn.ModuleList()
@@ -249,7 +271,7 @@ class WavKANEncoder(nn.Module):
         self.norms.append(nn.LayerNorm(repr_dim))
         
         # Projection head (for SSL)
-        self.projection_head = ProjectionHead(repr_dim, hidden_dim=128, output_dim=proj_dim, metadata_dim=kwargs.get('metadata_dim', 0))
+        self.projection_head = ProjectionHead(repr_dim, hidden_dim=256, output_dim=proj_dim, metadata_dim=kwargs.get('metadata_dim', 0))
         
         # Classification head (for downstream)
         self.classifier = None
@@ -284,133 +306,6 @@ class WavKANEncoder(nn.Module):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SE-RESNET1D-34 ENCODER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class SqueezeExcitation1D(nn.Module):
-    """Squeeze-and-Excitation block for 1D signals."""
-    def __init__(self, channel, reduction=16):
-        super().__init__()
-        self.avg_pool = nn.AdaptiveAvgPool1d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(channel // reduction, channel, bias=False),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        b, c, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1)
-        return x * y.expand_as(x)
-
-class SEResBlock1D(nn.Module):
-    """Residual block for 1D signals with Squeeze-and-Excitation."""
-    
-    def __init__(self, in_channels, out_channels, stride=1, reduction=16):
-        super().__init__()
-        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=7, 
-                               stride=stride, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=7, 
-                               stride=1, padding=3, bias=False)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.se = SqueezeExcitation1D(out_channels, reduction)
-        
-        self.downsample = None
-        if stride != 1 or in_channels != out_channels:
-            self.downsample = nn.Sequential(
-                nn.Conv1d(in_channels, out_channels, kernel_size=1, 
-                         stride=stride, bias=False),
-                nn.BatchNorm1d(out_channels)
-            )
-    
-    def forward(self, x):
-        identity = x
-        if self.downsample is not None:
-            identity = self.downsample(x)
-        
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out = self.se(out)
-        out += identity
-        return self.relu(out)
-
-class SEResNet1D34Encoder(nn.Module):
-    """
-    1D SE-ResNet-34 encoder for ECG signals.
-    
-    Architecture: Conv stem → 4 layers of SE-ResBlocks (3, 4, 6, 3) → Global Average Pool → repr_dim
-    Output dimension: 512
-    """
-    
-    def __init__(self, in_channels=1, repr_dim=512, proj_dim=128, **kwargs):
-        super().__init__()
-        
-        self.repr_dim = repr_dim
-        
-        # Convolutional stem
-        self.stem = nn.Sequential(
-            nn.Conv1d(in_channels, 64, kernel_size=15, stride=2, padding=7, bias=False),
-            nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
-        )
-        
-        # Residual layers (34-layer equivalent: 3, 4, 6, 3 blocks)
-        self.layer1 = self._make_layer(64, 64, 3, stride=1)
-        self.layer2 = self._make_layer(64, 128, 4, stride=2)
-        self.layer3 = self._make_layer(128, 256, 6, stride=2)
-        self.layer4 = self._make_layer(256, repr_dim, 3, stride=2)
-        
-        # Global average pooling
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        
-        # Projection head (for SSL)
-        self.projection_head = ProjectionHead(repr_dim, hidden_dim=256, output_dim=proj_dim, metadata_dim=kwargs.get('metadata_dim', 0))
-        
-        # Classification head (for downstream)
-        self.classifier = None
-    
-    def _make_layer(self, in_channels, out_channels, blocks, stride):
-        layers = []
-        layers.append(SEResBlock1D(in_channels, out_channels, stride))
-        for _ in range(1, blocks):
-            layers.append(SEResBlock1D(out_channels, out_channels))
-        return nn.Sequential(*layers)
-        
-    def set_classifier(self, num_classes):
-        self.classifier = nn.Linear(self.repr_dim, num_classes)
-        return self
-    
-    def encode(self, x):
-        if x.dim() == 2:
-            x = x.unsqueeze(1)
-        
-        x = self.stem(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        return x
-    
-    def forward(self, x, return_projection=False, metadata=None):
-        h = self.encode(x)
-        
-        if return_projection:
-            return self.projection_head(h, metadata)
-        
-        if self.classifier is not None:
-            return self.classifier(h)
-        
-        return h
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # FACTORY
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -424,7 +319,6 @@ def build_encoder(name='resnet1d', **kwargs):
     """
     encoders = {
         'resnet1d': ResNet1DEncoder,
-        'se_resnet1d34': SEResNet1D34Encoder,
         'wavkan': WavKANEncoder,
     }
     

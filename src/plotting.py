@@ -713,3 +713,198 @@ def plot_fairness_comparison(fairness_results, save_path=None):
         print(f"Fairness comparison plot saved: {save_path}")
     plt.close()
     return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RELIABILITY DIAGRAM (ECE VISUALIZATION)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_reliability_diagram(bin_data_dict, ece_dict=None, save_path=None):
+    """
+    Plot reliability diagrams for one or more methods.
+    
+    Args:
+        bin_data_dict: Dict of {method_name: {'bin_centers': [...], 'bin_accuracies': [...], 
+                       'bin_confidences': [...], 'bin_counts': [...]}}
+        ece_dict: Optional dict of {method_name: ece_value} for annotation
+        save_path: Path to save figure
+    """
+    n_methods = len(bin_data_dict)
+    fig, axes = plt.subplots(1, n_methods, figsize=(5 * n_methods, 5), squeeze=False)
+    
+    for idx, (method_name, data) in enumerate(bin_data_dict.items()):
+        ax = axes[0, idx]
+        centers = np.array(data['bin_centers'])
+        accs = np.array(data['bin_accuracies'])
+        confs = np.array(data['bin_confidences'])
+        counts = np.array(data['bin_counts'])
+        
+        # Perfect calibration line
+        ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect Calibration')
+        
+        # Bar chart of accuracy per confidence bin
+        bar_width = 0.06
+        color = COLORS.get(method_name, '#2166AC')
+        ax.bar(centers, accs, width=bar_width, alpha=0.7, color=color,
+               edgecolor='white', label='Model')
+        
+        # Gap visualization (shaded area showing miscalibration)
+        for c, a, conf in zip(centers, accs, confs):
+            if a < conf:
+                ax.fill_between([c - bar_width/2, c + bar_width/2], a, conf,
+                                alpha=0.2, color='red')
+            else:
+                ax.fill_between([c - bar_width/2, c + bar_width/2], conf, a,
+                                alpha=0.2, color='blue')
+        
+        ax.set_xlabel('Mean Predicted Confidence')
+        ax.set_ylabel('Fraction of Positives (Accuracy)')
+        ax.set_title(method_name, fontweight='bold')
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_aspect('equal')
+        
+        if ece_dict and method_name in ece_dict:
+            ax.text(0.05, 0.92, f"ECE = {ece_dict[method_name]:.4f}",
+                    transform=ax.transAxes, fontsize=11,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='wheat', alpha=0.7))
+        
+        ax.legend(loc='lower right', fontsize=8)
+    
+    plt.suptitle('Calibration Reliability Diagrams', fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path)
+        print(f"Reliability diagram saved: {save_path}")
+    plt.close()
+    return fig
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEW-SHOT LABEL EFFICIENCY CURVE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_few_shot_curve(results_dict, metric='F1', save_path=None):
+    """
+    Plot few-shot label efficiency curves for multiple methods.
+    
+    Args:
+        results_dict: Dict of {method_name: pd.DataFrame with columns [Labels, F1, AUROC, Accuracy]}
+        metric: Which column to plot ('F1', 'AUROC', 'Accuracy')
+        save_path: Path to save figure
+    """
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    
+    for method_name, df in results_dict.items():
+        color = COLORS.get(method_name, '#333333')
+        marker = MARKERS.get(method_name, 'o')
+        
+        ax.plot(df['Labels'], df[metric], color=color, marker=marker,
+                markersize=8, linewidth=2.2, label=method_name, zorder=3)
+    
+    ax.set_xlabel('Number of Labeled Samples', fontsize=12)
+    ax.set_ylabel(f'Macro {metric}', fontsize=12)
+    ax.set_title('Few-Shot Label Efficiency', fontsize=14, fontweight='bold')
+    ax.set_xscale('log')
+    ax.legend(loc='lower right', framealpha=0.9, edgecolor='gray')
+    ax.set_ylim(0.3, 1.0)
+    
+    plt.tight_layout()
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path)
+        print(f"Few-shot curve saved: {save_path}")
+    plt.close()
+    return fig
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. RAW DATASET DISTRIBUTION VISUALIZATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_raw_dataset_distribution(dataset_samples, dataset_names, save_path=None):
+    """
+    Visualizes the raw distribution of different datasets using UMAP.
+    High separability here proves domain shift exists.
+    
+    Args:
+        dataset_samples: list of numpy arrays (each N_i x 250)
+        dataset_names: list of strings
+    """
+    try:
+        import umap
+    except ImportError:
+        print("UMAP not installed")
+        return None
+        
+    all_X = []
+    all_y = []
+    
+    for i, (X, name) in enumerate(zip(dataset_samples, dataset_names)):
+        # Normalize each sample to [0, 1] for fair comparison
+        X_norm = (X - X.min(axis=1, keepdims=True)) / (X.max(axis=1, keepdims=True) - X.min(axis=1, keepdims=True) + 1e-6)
+        all_X.append(X_norm)
+        all_y.extend([i] * len(X))
+        
+    X_combined = np.concatenate(all_X, axis=0)
+    y_combined = np.array(all_y)
+    
+    print(f"Computing UMAP for raw data samples: {X_combined.shape}")
+    reducer = umap.UMAP(n_components=2, random_state=42)
+    embedding = reducer.fit_transform(X_combined)
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    spectral_colors = plt.cm.Spectral(np.linspace(0, 1, len(dataset_names)))
+    
+    for i, name in enumerate(dataset_names):
+        mask = y_combined == i
+        ax.scatter(embedding[mask, 0], embedding[mask, 1], 
+                   label=name, alpha=0.6, s=10, color=spectral_colors[i])
+        
+    ax.set_title("Raw ECG Distribution (Domain Shift Visualization)", fontsize=14, fontweight='bold')
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.legend()
+    
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+    plt.close()
+    return fig
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. TRAINING STABILITY (BATCH-LEVEL)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def plot_batch_stability(batch_history, save_path=None):
+    """
+    Plots batch-level loss for training stability diagnostics.
+    
+    Args:
+        batch_history: list of {'loss', 'loss_aug', 'loss_mae'}
+    """
+    if not batch_history: return
+    
+    df = pd.DataFrame(batch_history)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    # Smooth the curves a bit
+    window = 10
+    ax.plot(df['loss'].rolling(window).mean(), label='Total Loss', color='#333333', alpha=0.8)
+    if 'loss_aug' in df.columns:
+        ax.plot(df['loss_aug'].rolling(window).mean(), label='Contrastive Loss', color='#2166AC', alpha=0.6)
+    if 'loss_mae' in df.columns:
+        ax.plot(df['loss_mae'].rolling(window).mean(), label='MAE Loss', color='#D6604D', alpha=0.6)
+        
+    ax.set_title("Training Stability (Batch-level Loss)", fontsize=14, fontweight='bold')
+    ax.set_xlabel("Batch Step")
+    ax.set_ylabel("Loss")
+    ax.set_yscale('log')
+    ax.legend()
+    ax.grid(True, which="both", ls="-", alpha=0.2)
+    
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+    plt.close()
+    return fig
