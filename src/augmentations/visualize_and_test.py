@@ -20,7 +20,7 @@ from src.augmentations.physio_augmentations import (
     segment_dropout, FS, BEAT_LEN, QRS_HALF_WIDTH,
 )
 from src.augmentations.augmentation_pipeline import PhysioAugPipeline
-from src.augmentations.naive_augmentations import NaiveAugPipeline
+from src.augmentations.naive_augmentations import NaiveAugPipeline, naive_amplitude_scale
 
 
 def generate_synthetic_beat(r_peak_pos=125, fs=100, length=250):
@@ -382,8 +382,9 @@ def run_augmentation_tests():
     print("\n  Testing Validity Metrics...")
     physio_aug = amplitude_perturbation(signal.copy(), r_peak, scale_range=(0.8, 1.2), qrs_protect=True)
     naive_pipe = NaiveAugPipeline(p=1.0)
+    _ = naive_pipe  # keep class sanity check
     # create a strong naive augmentation to break QRS
-    naive_aug = naive_pipe.naive_amplitude_scale(signal.copy(), scale_range=(0.1, 2.0))
+    naive_aug = naive_amplitude_scale(signal.copy(), scale_range=(0.1, 2.0))
     
     qrs_physio = qrs_preservation_metric(signal, physio_aug, r_peak)
     sdr_physio = signal_distortion_ratio(signal, physio_aug)
