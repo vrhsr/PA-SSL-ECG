@@ -68,3 +68,11 @@ python -m src.evaluate --checkpoint experiments/ssl_resnet1d_physio_temporal/bes
   year={2026}
 }
 ```
+
+## Paper-Strength Roadmap
+
+A deep, prioritized plan to significantly strengthen experimental rigor, clinical relevance, and reviewer confidence is available in:
+
+- `docs/paper_strengthening_plan.md`
+
+If you are preparing a submission, follow this roadmap before finalizing claims (especially any state-of-the-art language).
