@@ -45,13 +45,12 @@ try:
     print("\n[3] Testing QRS Preservation Metric and SDR...")
     from src.augmentations.visualize_and_test import generate_synthetic_beat, qrs_preservation_metric, signal_distortion_ratio
     from src.augmentations.physio_augmentations import amplitude_perturbation
-    from src.augmentations.naive_augmentations import NaiveAugPipeline, naive_amplitude_scale
+    from src.augmentations.naive_augmentations import NaiveAugPipeline
     
     signal = generate_synthetic_beat()
     physio_aug = amplitude_perturbation(signal.copy(), 125, qrs_protect=True)
     naive_pipe = NaiveAugPipeline(p=1.0)
-    _ = naive_pipe  # keep instantiation to validate class import
-    naive_aug = naive_amplitude_scale(signal.copy(), scale_range=(0.1, 2.0))
+    naive_aug = naive_pipe.naive_amplitude_scale(signal.copy(), scale_range=(0.1, 2.0))
     
     physio_corr = qrs_preservation_metric(signal, physio_aug, r_peak_pos=125)
     naive_corr = qrs_preservation_metric(signal, naive_aug, r_peak_pos=125)
