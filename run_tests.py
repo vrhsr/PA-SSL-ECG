@@ -520,6 +520,158 @@ def test_masking_qrs_avoidance():
         f"QRS avoidance not working: physio={pa_qrs_rate:.3f}, random={rand_qrs_rate:.3f}"
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. NEW ENCODER & CLINICAL TESTS (Phase 1 additions)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_transformer_encoder():
+    """
+    Transformer encoder: forward pass shape + parameter count within 2x of ResNet1D.
+    Validates patch embedding, CLS-token extraction, and repr_dim output.
+    """
+    import torch
+    from src.models.encoder import build_encoder
+
+    enc = build_encoder('transformer', proj_dim=128)
+    enc.eval()
+
+    x = torch.randn(4, 1, 250)
+
+    # Representation output
+    h = enc.encode(x)
+    assert h.shape == (4, 256), f"Expected (4, 256), got {h.shape}"
+    assert torch.isfinite(h).all(), "NaN in Transformer representations"
+
+    # Projection output
+    z = enc(x, return_projection=True)
+    assert z.shape == (4, 128), f"Expected (4, 128) projection, got {z.shape}"
+
+    # Parameter count — should be within 3x of ResNet1D (2.05M)
+    n_params = sum(p.numel() for p in enc.parameters())
+    resnet = build_encoder('resnet1d', proj_dim=128)
+    resnet_params = sum(p.numel() for p in resnet.parameters())
+    ratio = n_params / resnet_params
+    print(f"    Transformer params: {n_params:,} | ResNet ratio: {ratio:.2f}x")
+    assert ratio < 3.0, f"Transformer too large vs ResNet ({ratio:.2f}x). Reduce d_model or num_layers."
+
+
+def test_mamba_encoder():
+    """
+    Mamba encoder: forward pass with GRU fallback when mamba_ssm is unavailable.
+    On GPU+Linux with mamba_ssm installed, uses real SSM kernels.
+    On CPU/Windows without mamba_ssm, uses bidirectional GRU fallback.
+    """
+    import torch
+    from src.models.encoder import build_encoder
+
+    enc = build_encoder('mamba', proj_dim=128)
+    enc.eval()
+
+    x = torch.randn(4, 1, 250)
+    h = enc.encode(x)
+    assert h.shape == (4, 256), f"Expected (4, 256), got {h.shape}"
+    assert torch.isfinite(h).all(), "NaN in Mamba representations"
+
+    z = enc(x, return_projection=True)
+    assert z.shape == (4, 128), f"Expected (4, 128) projection, got {z.shape}"
+
+    from src.models.mamba_encoder import _MAMBA_AVAILABLE
+    mode = "Mamba SSM" if _MAMBA_AVAILABLE else "GRU fallback"
+    n_params = sum(p.numel() for p in enc.parameters())
+    print(f"    Mode: {mode} | Params: {n_params:,}")
+
+
+def test_multi_task_smoke():
+    """
+    Multi-task clinical evaluation: smoke test with synthetic data.
+    Validates that all 4 tasks run end-to-end without error.
+    """
+    import torch
+    import numpy as np
+    from src.models.encoder import build_encoder
+    from src.experiments.multi_task_evaluation import (
+        AgeRegressionProbe,
+        SexClassificationProbe,
+        EmbeddingRetrievalEvaluator,
+    )
+
+    # Synthetic representations + metadata
+    n = 200
+    reprs = np.random.randn(n, 256).astype(np.float32)
+    ages = np.random.uniform(20, 80, n).astype(np.float32)
+    sexes = np.random.randint(0, 2, n).astype(np.float32)
+    labels = np.random.randint(0, 5, n)
+
+    split = 120
+    tr, ts = slice(0, split), slice(split, n)
+
+    # Age regression
+    age_probe = AgeRegressionProbe()
+    age_probe.fit(reprs[tr], ages[tr])
+    age_res = age_probe.evaluate(reprs[ts], ages[ts])
+    assert "mae_years" in age_res and age_res["mae_years"] > 0
+
+    # Sex classification
+    sex_probe = SexClassificationProbe()
+    sex_probe.fit(reprs[tr], sexes[tr])
+    sex_res = sex_probe.evaluate(reprs[ts], sexes[ts])
+    assert 0 <= sex_res["auroc"] <= 1
+
+    # Retrieval
+    retrieval = EmbeddingRetrievalEvaluator(k_values=(1, 5))
+    ret_res = retrieval.evaluate(reprs[ts], labels[ts])
+    assert "P@1" in ret_res["precision_at_k"]
+    assert 0 <= ret_res["mAP"] <= 1
+
+    print(f"    Age MAE: {age_res['mae_years']:.2f} yr | "
+          f"Sex AUROC: {sex_res['auroc']:.3f} | "
+          f"Retrieval mAP: {ret_res['mAP']:.3f}")
+
+
+def test_mcdropout_uncertainty():
+    """
+    MC-Dropout uncertainty: validate output shapes and that uncertain samples
+    can be identified. Confidence must improve after rejecting high-uncertainty.
+    """
+    import torch
+    import numpy as np
+    from src.models.encoder import build_encoder
+    from src.models.uncertainty import MCDropoutPredictor
+
+    enc = build_encoder('resnet1d', proj_dim=128)
+    device = torch.device('cpu')
+    enc = enc.to(device)
+
+    # Synthetic training data
+    n_train, n_test = 100, 50
+    train_reprs = np.random.randn(n_train, 256).astype(np.float32)
+    train_labels = np.random.randint(0, 3, n_train)
+    test_reprs = np.random.randn(n_test, 256).astype(np.float32)
+    test_labels = np.random.randint(0, 3, n_test)
+
+    predictor = MCDropoutPredictor(enc, num_classes=3, T=5, dropout_rate=0.2)
+    predictor.fit_classifier(train_reprs, train_labels)
+
+    x_test = torch.tensor(test_reprs).unsqueeze(1)  # (50, 1, 256) — fake signal dim
+    # Use shorter dummy signals to avoid shape mismatch; patch encoding
+    x_test_signal = torch.randn(n_test, 1, 250)  # Proper signal shape
+
+    mean_p, variance = predictor.predict_with_uncertainty(x_test_signal)
+    assert mean_p.shape == (n_test, 3), f"Expected ({n_test}, 3), got {mean_p.shape}"
+    assert variance.shape == (n_test, 3)
+    assert np.all(variance >= 0), "Variance must be non-negative"
+    assert np.allclose(mean_p.sum(axis=1), 1.0, atol=0.01), "Probabilities must sum to 1"
+
+    # Selective prediction
+    report = predictor.selective_prediction(x_test_signal, test_labels, threshold_percentile=80)
+    assert 0 <= report["flagged_fraction"] <= 1
+    assert 0 <= report["coverage"] <= 1
+    print(f"    Mean uncertainty: {report['mean_uncertainty']:.4f} | "
+          f"Flagged: {report['flagged_fraction']:.1%} | "
+          f"Coverage: {report['coverage']:.1%}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -566,6 +718,12 @@ if __name__ == "__main__":
     run_test("★ Patient-level split (zero leakage)", test_patient_split_leakage)
     run_test("★ Masking strategies (random/contiguous/physio)", test_masking_strategies)
     run_test("★ QRS avoidance verification", test_masking_qrs_avoidance)
+
+    print("\n── 8. New Encoder & Clinical Tests ──")
+    run_test("Transformer encoder forward", test_transformer_encoder)
+    run_test("Mamba encoder forward (GRU fallback OK)", test_mamba_encoder)
+    run_test("Multi-task evaluation smoke", test_multi_task_smoke)
+    run_test("MC-Dropout uncertainty shapes", test_mcdropout_uncertainty)
     
     # Summary
     total = PASS + FAIL

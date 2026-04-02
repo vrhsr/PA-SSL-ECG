@@ -49,4 +49,15 @@ env/
 !/experiments/run_paper_pipeline.ps1
 !/experiments/run_smoke_test.ps1
 !/experiments/run_gpu_pipeline.sh
+!/experiments/run_ablation.sh
 !/experiments/.gitkeep
+
+# Generated outputs (reproducible from code)
+test_out.txt
+figures/
+*.log
+
+# Large model checkpoints (stored on GPU server, not in git)
+*.pth
+*.pt
+*.ckpt

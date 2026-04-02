@@ -85,12 +85,17 @@ echo "================================================================"
 rm -rf experiments/smoke
 mkdir -p experiments/smoke
 
-# SSL Pretraining Matrix (smoke)
+# SSL Pretraining Matrix (smoke) — 3×2 factorial:
+#   Encoders:  resnet1d | wavkan
+#   SSL Modes: ntxent   | vicreg | hybrid
 CONFIGS=(
     "simclr_naive_resnet|resnet1d|naive|--no_temporal|ntxent"
     "passl_resnet_ntxent|resnet1d|physio|--use_temporal|ntxent"
-    "passl_seresnet_ntxent|se_resnet1d34|physio|--use_temporal|ntxent"
-    "passl_seresnet_vicreg|se_resnet1d34|physio|--use_temporal|vicreg"
+    "passl_resnet_vicreg|resnet1d|physio|--use_temporal|vicreg"
+    "passl_resnet_hybrid|resnet1d|physio|--use_temporal|hybrid"
+    "passl_wavkan_ntxent|wavkan|physio|--use_temporal|ntxent"
+    "passl_wavkan_vicreg|wavkan|physio|--use_temporal|vicreg"
+    "passl_wavkan_hybrid|wavkan|physio|--use_temporal|hybrid"
 )
 
 echo ""
@@ -154,21 +159,21 @@ for config in "${CONFIGS[@]}"; do
     fi
 done
 
-# Cross-dataset (smoke)
+# Cross-dataset (smoke) — use best hybrid model (resnet1d)
 echo ""
 echo "[5/9] Smoke Test: Cross-Dataset Transfer..."
 python -m src.evaluate \
-    --checkpoint experiments/smoke/ssl_passl_seresnet_vicreg/best_checkpoint.pth \
+    --checkpoint experiments/smoke/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/mitbih_processed.csv \
-    --encoder se_resnet1d34 \
+    --encoder resnet1d \
     --max_batches 10 \
     --n_seeds 1 \
     2>&1 | tee "$LOG_DIR/smoke_transfer_mitbih.log"
 
 python -m src.evaluate \
-    --checkpoint experiments/smoke/ssl_passl_seresnet_vicreg/best_checkpoint.pth \
+    --checkpoint experiments/smoke/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/chapman_processed.csv \
-    --encoder se_resnet1d34 \
+    --encoder resnet1d \
     --max_batches 10 \
     --n_seeds 1 \
     2>&1 | tee "$LOG_DIR/smoke_transfer_chapman.log"
@@ -195,9 +200,9 @@ echo "PHASE 2: FULL TRAINING (100 epochs, batch_size=512)"
 echo "Started at: $(date)"
 echo "================================================================"
 
-# SSL Pretraining Matrix (full)
+# SSL Pretraining Matrix (full) — same 3×2 factorial
 echo ""
-echo "[6/9] Full SSL Pretraining (4 variants × 100 epochs)..."
+echo "[6/9] Full SSL Pretraining (7 variants × 100 epochs)..."
 for config in "${CONFIGS[@]}"; do
     IFS='|' read -r name enc aug temp loss <<< "$config"
     out_dir="experiments/ssl_${name}"
@@ -245,19 +250,19 @@ for config in "${CONFIGS[@]}"; do
     fi
 done
 
-# Cross-dataset transfer
+# Cross-dataset transfer — use hybrid ResNet1D (expected best)
 echo "  Cross-dataset: MIT-BIH..."
 python -m src.evaluate \
-    --checkpoint experiments/ssl_passl_seresnet_vicreg/best_checkpoint.pth \
+    --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/mitbih_processed.csv \
-    --encoder se_resnet1d34 \
+    --encoder resnet1d \
     2>&1 | tee "$LOG_DIR/full_transfer_mitbih.log"
 
 echo "  Cross-dataset: Chapman..."
 python -m src.evaluate \
-    --checkpoint experiments/ssl_passl_seresnet_vicreg/best_checkpoint.pth \
+    --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/chapman_processed.csv \
-    --encoder se_resnet1d34 \
+    --encoder resnet1d \
     2>&1 | tee "$LOG_DIR/full_transfer_chapman.log"
 
 # Figures & Ablations
@@ -278,30 +283,20 @@ plot_ablation_bars(pd.read_csv('experiments/ablations/ablation_results.csv'), sa
 print('Ablation complete!')
 " 2>&1 | tee "$LOG_DIR/full_ablation.log" || true
 
-# UMAP
-python -c "
-import torch, numpy as np, os
-from src.data.ecg_dataset import ECGBeatDataset
-from src.models.encoder import build_encoder
-from src.evaluate import extract_representations
-from src.plotting import plot_umap_embeddings
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-os.makedirs('figures', exist_ok=True)
-encoder = build_encoder('se_resnet1d34', proj_dim=128)
-ckpt = torch.load('experiments/ssl_passl_seresnet_vicreg/best_checkpoint.pth', map_location=device)
-encoder.load_state_dict(ckpt['encoder_state_dict'])
-encoder = encoder.to(device)
-dataset = ECGBeatDataset('data/ptbxl_processed.csv')
-reprs, labels = extract_representations(encoder, dataset, device)
-plot_umap_embeddings(reprs, labels, method_name='PA-SSL (SE-ResNet34, VICReg)', save_path='figures/umap_passl_vicreg.png')
-print('UMAP saved!')
-" 2>&1 | tee "$LOG_DIR/full_umap.log" || true
+# UMAP — dual colored (by dataset + by condition) using best hybrid ResNet model
+python -m src.experiments.plot_umap \
+    --encoder resnet1d \
+    --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
+    --datasets data/ptbxl_processed.csv data/mitbih_processed.csv data/chapman_processed.csv \
+    --max_samples 5000 \
+    --output figures/umap_dual_passl_hybrid.png \
+    2>&1 | tee "$LOG_DIR/full_umap.log" || true
 
 # Grad-CAM
 python -m src.gradcam \
-    --checkpoint experiments/ssl_passl_seresnet_vicreg/best_checkpoint.pth \
+    --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/ptbxl_processed.csv \
-    --output figures/gradcam_passl_vicreg.png \
+    --output figures/gradcam_passl_hybrid.png \
     2>&1 | tee "$LOG_DIR/full_gradcam.log" || true
 
 # OOD & Robustness
@@ -310,8 +305,8 @@ from src.experiments import robustness_experiment, ood_detection_experiment
 from src.models.encoder import build_encoder
 import torch, json
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-encoder = build_encoder('se_resnet1d34', proj_dim=128)
-ckpt = torch.load('experiments/ssl_passl_seresnet_vicreg/best_checkpoint.pth', map_location=device)
+encoder = build_encoder('resnet1d', proj_dim=128)
+ckpt = torch.load('experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth', map_location=device)
 encoder.load_state_dict(ckpt['encoder_state_dict'])
 encoder = encoder.to(device)
 results = robustness_experiment(encoder, 'data/ptbxl_processed.csv', device)

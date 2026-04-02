@@ -23,14 +23,17 @@ if (-not (Test-Path "data/chapman_processed.csv")) {
     python -m src.data.emit_chapman --output data/chapman_processed.csv 2>$null
 }
 
-# --- 2. SSL Pretraining Matrix ---
+# --- 2. SSL Pretraining Matrix --- 3×2 factorial (encoders × ssl modes)
 Write-Host "`n[2/7] Executing SSL Pretraining (1 Epoch)..."
 
 $configs = @(
     @{name="simclr_naive_resnet"; enc="resnet1d"; aug="naive"; temp="False"; loss="ntxent"},
     @{name="passl_resnet_ntxent"; enc="resnet1d"; aug="physio"; temp="True"; loss="ntxent"},
-    @{name="passl_seresnet_ntxent"; enc="se_resnet1d34"; aug="physio"; temp="True"; loss="ntxent"},
-    @{name="passl_seresnet_vicreg"; enc="se_resnet1d34"; aug="physio"; temp="True"; loss="vicreg"}
+    @{name="passl_resnet_vicreg"; enc="resnet1d"; aug="physio"; temp="True"; loss="vicreg"},
+    @{name="passl_resnet_hybrid"; enc="resnet1d"; aug="physio"; temp="True"; loss="hybrid"},
+    @{name="passl_wavkan_ntxent"; enc="wavkan";   aug="physio"; temp="True"; loss="ntxent"},
+    @{name="passl_wavkan_vicreg"; enc="wavkan";   aug="physio"; temp="True"; loss="vicreg"},
+    @{name="passl_wavkan_hybrid"; enc="wavkan";   aug="physio"; temp="True"; loss="hybrid"}
 )
 
 foreach ($cfg in $configs) {
@@ -53,11 +56,10 @@ foreach ($cfg in $configs) {
     }
 }
 
-# --- 5. Cross-Dataset Transfer Matrix ---
+# --- 5. Cross-Dataset Transfer Matrix --- use best model (hybrid resnet1d)
 Write-Host "`n[5/7] Cross-Dataset Transfer..."
-# Evaluate best model (PA-SSL SE-ResNet NT-Xent or VICReg) on MIT-BIH and Chapman
-python -m src.evaluate --checkpoint experiments/smoke/ssl_passl_seresnet_vicreg/best_checkpoint.pth --data_file data/mitbih_processed.csv --encoder se_resnet1d34 --max_batches 10 --n_seeds 1
-python -m src.evaluate --checkpoint experiments/smoke/ssl_passl_seresnet_vicreg/best_checkpoint.pth --data_file data/chapman_processed.csv --encoder se_resnet1d34 --max_batches 10 --n_seeds 1
+python -m src.evaluate --checkpoint experiments/smoke/ssl_passl_resnet_hybrid/best_checkpoint.pth --data_file data/mitbih_processed.csv --encoder resnet1d --max_batches 10 --n_seeds 1
+python -m src.evaluate --checkpoint experiments/smoke/ssl_passl_resnet_hybrid/best_checkpoint.pth --data_file data/chapman_processed.csv --encoder resnet1d --max_batches 10 --n_seeds 1
 
 # --- 6. Component & Augmentation Ablations & Validations ---
 Write-Host "`n[6/7] Running QRS Validation & Advanced Analytics..."
@@ -70,10 +72,11 @@ python -c "import pandas as pd; import os; os.makedirs('experiments/smoke/figure
 # --- 7. Generate Paper Figures ---
 Write-Host "`n[7/7] Generating Paper Figures (UMAP, Grad-CAM, etc)..."
 # UMAP/t-SNE Representation Visualization
-python -c "import torch, numpy as np, os; from src.data.ecg_dataset import ECGBeatDataset; from src.models.encoder import build_encoder; from src.evaluate import extract_representations; from src.plotting import plot_umap_embeddings; device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'); os.makedirs('experiments/smoke/figures', exist_ok=True); encoder = build_encoder('se_resnet1d34', proj_dim=128); ckpt = torch.load('experiments/smoke/ssl_passl_seresnet_vicreg/best_checkpoint.pth', map_location=device); encoder.load_state_dict(ckpt['encoder_state_dict']); encoder = encoder.to(device); dataset = ECGBeatDataset('data/ptbxl_processed.csv'); reprs, labels = extract_representations(encoder, dataset, device); plot_umap_embeddings(reprs, labels, method_name='PA-SSL Smoke', save_path='experiments/smoke/figures/umap.png'); print('UMAP saved')"
+# UMAP/t-SNE Representation Visualization (dual colored: by dataset + by condition)
+python -m src.experiments.plot_umap --encoder resnet1d --checkpoint experiments/smoke/ssl_passl_resnet_hybrid/best_checkpoint.pth --datasets data/ptbxl_processed.csv --max_samples 2000 --output experiments/smoke/figures/umap_dual.png
 
 # Grad-CAM 
-python -m src.gradcam --checkpoint experiments/smoke/ssl_passl_seresnet_vicreg/best_checkpoint.pth --data_file data/ptbxl_processed.csv --output experiments/smoke/figures/gradcam.png
+python -m src.gradcam --checkpoint experiments/smoke/ssl_passl_resnet_hybrid/best_checkpoint.pth --data_file data/ptbxl_processed.csv --output experiments/smoke/figures/gradcam.png
 
 Write-Host "`n================================================================"
 Write-Host "PA-SSL: SMOKE TEST Complete!"

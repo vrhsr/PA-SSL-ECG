@@ -395,6 +395,8 @@ def profile_model(encoder, input_shape=(1, 1, 250), n_forward=100, device=None):
         'n_parameters': n_params,
         'n_trainable': n_trainable,
         'inference_ms': inference_ms,
+        'gpu_memory_mb': gpu_memory_mb
+    }
     return result
 
 

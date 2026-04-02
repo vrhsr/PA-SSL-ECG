@@ -312,17 +312,33 @@ class WavKANEncoder(nn.Module):
 def build_encoder(name='resnet1d', **kwargs):
     """
     Build encoder by name.
-    
+
     Args:
-        name: 'resnet1d' or 'wavkan'
+        name: One of 'resnet1d', 'wavkan', 'transformer', 'mamba'
         **kwargs: passed to encoder constructor
+
+    Encoders:
+        resnet1d    – 4-layer 1D ResNet         (~2.05M params)
+        wavkan      – WavKAN (wavelet KAN)      (~2.82M params)
+        transformer – 1D ViT-style              (~3.0M params)
+        mamba       – Mamba SSM (CUDA/Linux)    (~2.5M params)
     """
-    encoders = {
-        'resnet1d': ResNet1DEncoder,
-        'wavkan': WavKANEncoder,
-    }
-    
-    if name not in encoders:
-        raise ValueError(f"Unknown encoder: {name}. Choose from {list(encoders.keys())}")
-    
-    return encoders[name](**kwargs)
+    if name in ('resnet1d', 'wavkan'):
+        encoders = {
+            'resnet1d': ResNet1DEncoder,
+            'wavkan': WavKANEncoder,
+        }
+        return encoders[name](**kwargs)
+
+    if name == 'transformer':
+        from src.models.transformer_encoder import ECGTransformerEncoder
+        return ECGTransformerEncoder(**kwargs)
+
+    if name == 'mamba':
+        from src.models.mamba_encoder import MambaECGEncoder
+        return MambaECGEncoder(**kwargs)
+
+    raise ValueError(
+        f"Unknown encoder: '{name}'. "
+        f"Choose from ['resnet1d', 'wavkan', 'transformer', 'mamba']"
+    )
