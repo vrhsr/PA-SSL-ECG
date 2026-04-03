@@ -174,7 +174,7 @@ def download_ptbxl():
 
 # ─── MAIN PROCESSING ─────────────────────────────────────────────────────────
 
-def process_ptbxl(output_file=None, label_mode='binary'):
+def process_ptbxl(output_file=None, label_mode='binary', data_dir=None):
     """
     Process PTB-XL dataset into beat-level CSV.
     
@@ -186,11 +186,15 @@ def process_ptbxl(output_file=None, label_mode='binary'):
         - 'beat_idx': beat index within the record (for temporal ordering)
         - 'r_peak_pos': R-peak position within the 250-sample window (for augmentations)
     """
+    global DATA_DIR
     if output_file is None:
         output_file = OUTPUT_FILE
-    
-    # Download if needed
-    download_ptbxl()
+    if data_dir is not None:
+        DATA_DIR = data_dir
+        print(f"Using data_dir: {DATA_DIR}")
+    else:
+        # Auto-detect or download
+        download_ptbxl()
     
     db_csv_path = os.path.join(DATA_DIR, 'ptbxl_database.csv')
     print(f"Loading PTB-XL metadata from {DATA_DIR}...")
@@ -321,7 +325,13 @@ def process_ptbxl(output_file=None, label_mode='binary'):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Process PTB-XL dataset")
-    parser.add_argument('--output', type=str, default=OUTPUT_FILE)
-    parser.add_argument('--label_mode', type=str, default='binary', choices=['binary', 'multiclass'])
+    parser.add_argument('--output', type=str, default=OUTPUT_FILE,
+                        help='Output CSV path')
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help='Path to PTB-XL root dir (containing ptbxl_database.csv). '
+                             'If omitted, auto-detects or downloads.')
+    parser.add_argument('--label_mode', type=str, default='binary',
+                        choices=['binary', 'multiclass'])
     args = parser.parse_args()
-    process_ptbxl(args.output, args.label_mode)
+    process_ptbxl(args.output, args.label_mode, args.data_dir)
+

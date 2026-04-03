@@ -70,7 +70,7 @@ def detect_r_peaks(signal, fs):
 
 # ─── MAIN PROCESSING ─────────────────────────────────────────────────────────
 
-def process_chapman(output_file=None):
+def process_chapman(output_file=None, data_dir=None):
     """
     Process Chapman-Shaoxing dataset.
     
@@ -79,8 +79,12 @@ def process_chapman(output_file=None):
     
     Place the extracted data in data/chapman-shaoxing/
     """
+    global DATA_DIR
     if output_file is None:
         output_file = OUTPUT_FILE
+    if data_dir is not None:
+        DATA_DIR = data_dir
+        print(f"Using data_dir: {DATA_DIR}")
         
     # Ensure base data directory exists
     if not os.path.exists(DATA_DIR):
@@ -227,6 +231,10 @@ def process_chapman(output_file=None):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Process Chapman-Shaoxing dataset")
-    parser.add_argument('--output', type=str, default=OUTPUT_FILE)
+    parser.add_argument('--output', type=str, default=OUTPUT_FILE,
+                        help='Output CSV path')
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help='Path to Chapman data directory (containing .mat/.hea files)')
     args = parser.parse_args()
-    process_chapman(args.output)
+    process_chapman(args.output, args.data_dir)
+
