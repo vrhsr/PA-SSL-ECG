@@ -97,7 +97,7 @@ def train_ssl(args):
       # Load primary SSL dataset
     print(f"\nLoading SSL Dataset: {args.data_file}")
     full_dataset = SSLECGDataset(
-        data_file=args.data_file, 
+        base_dataset,
         augmentation_pipeline=aug_pipeline,
         use_temporal_positives=args.use_temporal,
         temporal_scales=args.temporal_scales
