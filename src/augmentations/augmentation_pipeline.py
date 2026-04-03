@@ -45,7 +45,7 @@ class PhysioAugPipeline:
         self.augmentations = augmentations
     
     @classmethod
-    def default(cls, strength='medium', exclude=None, only=None):
+    def default(cls, strength='medium', exclude=None, only=None, qrs_protect=True):
         """
         Create default physiology-aware pipeline.
         
@@ -53,6 +53,8 @@ class PhysioAugPipeline:
             strength: 'light', 'medium', or 'strong'
             exclude: list of function names to exclude (leave-one-out)
             only: list of function names to exclusively use (leave-one-in)
+            qrs_protect: if False, disables QRS-region protection in amplitude_perturbation
+                         (used for the QRS protection ablation experiment)
         """
         configs = {
             'light': {
@@ -82,13 +84,13 @@ class PhysioAugPipeline:
         
         augmentations = [
             (constrained_time_warp, {'max_warp': cfg['warp_max']}, cfg['warp_p']),
-            (amplitude_perturbation, {'scale_range': cfg['amp_range'], 'qrs_protect': True}, cfg['amp_p']),
+            (amplitude_perturbation, {'scale_range': cfg['amp_range'], 'qrs_protect': qrs_protect}, cfg['amp_p']),
             (baseline_wander, {'max_amplitude': cfg['bw_amp']}, cfg['bw_p']),
             (emg_noise_injection, {'snr_range': cfg['snr_range']}, cfg['emg_p']),
             (heart_rate_resample, {'rate_factor_range': cfg['hr_range']}, cfg['hr_p']),
             (powerline_interference, {}, cfg['pl_p']),
             (segment_dropout, {}, cfg['drop_p']),
-            (wavelet_masking, {'max_mask_ratio': 0.3}, cfg['drop_p']), # Tied to drop probability
+            (wavelet_masking, {'max_mask_ratio': 0.3}, cfg['drop_p']),
         ]
         
         if exclude:

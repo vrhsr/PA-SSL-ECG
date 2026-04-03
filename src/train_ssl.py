@@ -82,11 +82,13 @@ def train_ssl(args):
     # Augmentation pipeline
     if args.augmentation == 'physio':
         aug_pipeline = PhysioAugPipeline.default(
-            strength=args.aug_strength, 
-            exclude=args.exclude_aug, 
-            only=args.only_aug
+            strength=args.aug_strength,
+            exclude=args.exclude_aug,
+            only=args.only_aug,
+            qrs_protect=not args.no_qrs_protect
         )
-        print(f"Using Physiology-Aware Augmentations ({args.aug_strength})")
+        qrs_str = '(NO QRS protection — ablation)' if args.no_qrs_protect else f'({args.aug_strength})'
+        print(f"Using Physiology-Aware Augmentations {qrs_str}")
         print(aug_pipeline)
     elif args.augmentation == 'naive':
         aug_pipeline = NaiveAugPipeline(p=0.5)
@@ -459,6 +461,8 @@ if __name__ == "__main__":
                         help='Number of beats away to sample temporal positives (e.g., 1 2 3)')
     parser.add_argument('--use_metadata', action='store_true', default=False,
                         help='Condition projection head on patient demography (Phase 9)')
+    parser.add_argument('--no_qrs_protect', action='store_true', default=False,
+                        help='Disable QRS-region protection in amplitude_perturbation (for ablation)')
     
     # Training
     parser.add_argument('--epochs', type=int, default=100)

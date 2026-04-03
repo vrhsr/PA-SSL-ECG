@@ -1,304 +1,254 @@
 #!/bin/bash
-# ═══════════════════════════════════════════════════════════════════════════════
-# PA-SSL: 3×2 Factorial Ablation Runner
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-# Runs the complete 3×2 factorial experiment matrix:
-#   Encoders:   CNN (resnet1d) | KAN (wavkan)
-#   SSL Modes:  contrastive    | mae          | hybrid
-#
-# Total: 6 pretraining runs + 6 downstream evaluation runs
-#
-# Usage:
-#   chmod +x experiments/run_ablation.sh
-#   ./experiments/run_ablation.sh [--quick]    # quick = smoke test mode
-# ═══════════════════════════════════════════════════════════════════════════════
+# PA-SSL: Full Ablation Suite
+# Corrected for actual train_ssl.py argument names:
+#   --ssl_mode  : contrastive | mae | hybrid
+#   --loss_type : ntxent | vicreg | barlow   (the contrastive objective)
+#   --mask_ratio: 0.0-1.0 float  (NOT "80_20" format)
+#   --no_qrs_protect: flag to disable QRS protection
 
-set -e
+set -e  # stop on first error
 
-# ─── Configuration ────────────────────────────────────────────────────────────
-DATA_FILE="${DATA_FILE:-data/ptbxl_processed.csv}"
-EPOCHS="${EPOCHS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-256}"
-LR="3e-4"
-QUICK_TEST=""
+# ── CONFIG ──────────────────────────────────────────────────────────────────
+DATA="${1:-data/ptbxl_processed.csv}"
+EPOCHS="${2:-100}"
+BS=256
+LR=3e-4
+SEEDS=(42 123 456)
 
-if [[ "$1" == "--quick" ]]; then
-    echo "═══ QUICK / SMOKE TEST MODE ═══"
-    QUICK_TEST="--quick_test"
-    EPOCHS=2
+if [ ! -f "$DATA" ]; then
+    echo "❌ Data file not found: $DATA"
+    echo "   Usage: bash experiments/run_ablation.sh [data_csv] [epochs]"
+    exit 1
 fi
 
-ENCODERS=("resnet1d" "wavkan")
-SSL_MODES=("contrastive" "mae" "hybrid")
+mkdir -p logs experiments/ablation experiments/qrs_ablation \
+          experiments/masking_sweep experiments/baselines results
 
-RESULTS_DIR="experiments/ablation_results"
-mkdir -p "$RESULTS_DIR"
+echo "=================================================="
+echo " PA-SSL Full Ablation"
+echo " Data:   $DATA"
+echo " Epochs: $EPOCHS"
+echo " Seeds:  ${SEEDS[*]}"
+echo " Started: $(date)"
+echo "=================================================="
 
-echo "═══════════════════════════════════════════════════════════════"
-echo "  PA-SSL 3×2 Factorial Ablation"
-echo "  Data: $DATA_FILE"
-echo "  Epochs: $EPOCHS"
-echo "  Encoders: ${ENCODERS[*]}"
-echo "  SSL Modes: ${SSL_MODES[*]}"
-echo "═══════════════════════════════════════════════════════════════"
-
-# ─── Phase 1: Pretraining ─────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# BLOCK 1: 3×2 ABLATION  (encoder × ssl_mode, 3 seeds each)
+#   Encoders : resnet1d | wavkan
+#   SSL modes: contrastive | mae | hybrid
+#   = 6 cells × 3 seeds = 18 runs
+# ═══════════════════════════════════════════════════════════
 echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║  PHASE 1: SSL PRETRAINING (6 runs)  ║"
-echo "╚══════════════════════════════════════╝"
+echo "━━━ BLOCK 1: 3×2 Ablation (18 runs) ━━━"
 
-for encoder in "${ENCODERS[@]}"; do
-    for ssl_mode in "${SSL_MODES[@]}"; do
-        EXP_NAME="ssl_${encoder}_${ssl_mode}"
-        EXP_DIR="$RESULTS_DIR/$EXP_NAME"
-        mkdir -p "$EXP_DIR"
+for SEED in "${SEEDS[@]}"; do
+for ENC in resnet1d wavkan; do
+for MODE in contrastive mae hybrid; do
 
-        echo ""
-        echo "──────────────────────────────────────"
-        echo "  Training: $EXP_NAME"
-        echo "──────────────────────────────────────"
+    NAME="${ENC}_${MODE}_s${SEED}"
+    OUT="experiments/ablation/${NAME}"
 
-        python -m src.train_ssl \
-            --encoder "$encoder" \
-            --ssl_mode "$ssl_mode" \
-            --augmentation physio \
-            --data_file "$DATA_FILE" \
-            --epochs "$EPOCHS" \
-            --batch_size "$BATCH_SIZE" \
-            --lr "$LR" \
-            --output_dir "$EXP_DIR" \
-            $QUICK_TEST \
-            2>&1 | tee "$EXP_DIR/train.log"
+    if [ -f "${OUT}/done.flag" ]; then
+        echo "  ⏭  $NAME (already done)"
+        continue
+    fi
 
-        echo "  ✓ $EXP_NAME pretraining complete"
-    done
+    echo ""
+    echo "  🚀  $NAME  [encoder=$ENC  ssl_mode=$MODE  seed=$SEED]"
+    mkdir -p "$OUT"
+
+    python3 -m src.train_ssl \
+        --encoder        "$ENC" \
+        --ssl_mode       "$MODE" \
+        --augmentation   physio \
+        --use_temporal \
+        --loss_type      ntxent \
+        --epochs         $EPOCHS \
+        --batch_size     $BS \
+        --lr             $LR \
+        --seed           $SEED \
+        --data_file      "$DATA" \
+        --output_dir     "$OUT" \
+        --save_every     20 \
+        --num_workers    4 \
+        2>&1 | tee "logs/abl_${NAME}.log"
+
+    touch "${OUT}/done.flag"
+    echo "  ✅  $NAME done"
+
+done; done; done
+
+echo ""
+echo "BLOCK 1 complete: $(date)"
+
+# ═══════════════════════════════════════════════════════════
+# BLOCK 2: QRS PROTECTION ISOLATION
+#   Best encoder (resnet1d) + hybrid mode
+#   WITH vs WITHOUT QRS protection  (seed=42 only, 2 runs)
+# ═══════════════════════════════════════════════════════════
+echo ""
+echo "━━━ BLOCK 2: QRS Protection Isolation (2 runs) ━━━"
+
+for QRS_FLAG in "" "--no_qrs_protect"; do
+    if [ -z "$QRS_FLAG" ]; then
+        LABEL="qrs_protected"
+    else
+        LABEL="qrs_unprotected"
+    fi
+
+    NAME="resnet1d_hybrid_${LABEL}_s42"
+    OUT="experiments/qrs_ablation/${NAME}"
+
+    if [ -f "${OUT}/done.flag" ]; then
+        echo "  ⏭  $NAME (already done)"
+        continue
+    fi
+
+    echo ""
+    echo "  🚀  $NAME  [QRS flag: '${QRS_FLAG:-none}']"
+    mkdir -p "$OUT"
+
+    python3 -m src.train_ssl \
+        --encoder        resnet1d \
+        --ssl_mode       hybrid \
+        --augmentation   physio \
+        --use_temporal \
+        --loss_type      ntxent \
+        $QRS_FLAG \
+        --epochs         $EPOCHS \
+        --batch_size     $BS \
+        --lr             $LR \
+        --seed           42 \
+        --data_file      "$DATA" \
+        --output_dir     "$OUT" \
+        --num_workers    4 \
+        2>&1 | tee "logs/qrs_${NAME}.log"
+
+    touch "${OUT}/done.flag"
+    echo "  ✅  $NAME done"
+
 done
 
-# ─── Phase 2: Downstream Evaluation ──────────────────────────────────────────
 echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 2: DOWNSTREAM EVALUATION (6 runs)║"
-echo "╚══════════════════════════════════════════╝"
+echo "BLOCK 2 complete: $(date)"
 
-for encoder in "${ENCODERS[@]}"; do
-    for ssl_mode in "${SSL_MODES[@]}"; do
-        EXP_NAME="ssl_${encoder}_${ssl_mode}"
-        EXP_DIR="$RESULTS_DIR/$EXP_NAME"
-        CKPT="$EXP_DIR/best_checkpoint.pth"
+# ═══════════════════════════════════════════════════════════
+# BLOCK 3: MASKING RATIO SENSITIVITY
+#   --mask_ratio takes a float 0.0–1.0
+#   0.0 = no masking (pure contrastive), 1.0 = mask everything
+#   Test: 0.0, 0.3, 0.5, 0.6 (default), 0.7, 0.9
+# ═══════════════════════════════════════════════════════════
+echo ""
+echo "━━━ BLOCK 3: Masking Ratio Sensitivity (6 runs) ━━━"
 
-        if [ ! -f "$CKPT" ]; then
-            echo "  ⚠ Checkpoint not found for $EXP_NAME, skipping evaluation."
-            continue
-        fi
+for RATIO in 0.0 0.3 0.5 0.6 0.7 0.9; do
+    RATIO_LABEL=$(echo "$RATIO" | tr '.' '_')
+    NAME="resnet1d_hybrid_mask${RATIO_LABEL}_s42"
+    OUT="experiments/masking_sweep/${NAME}"
 
-        echo ""
-        echo "──────────────────────────────────────"
-        echo "  Evaluating: $EXP_NAME"
-        echo "──────────────────────────────────────"
+    if [ -f "${OUT}/done.flag" ]; then
+        echo "  ⏭  $NAME (already done)"
+        continue
+    fi
 
-        python -m src.evaluate \
-            --encoder "$encoder" \
-            --checkpoint "$CKPT" \
-            --data_file "$DATA_FILE" \
-            --output_dir "$EXP_DIR" \
-            2>&1 | tee "$EXP_DIR/eval.log"
+    echo ""
+    echo "  🚀  $NAME  [mask_ratio=$RATIO]"
+    mkdir -p "$OUT"
 
-        echo "  ✓ $EXP_NAME evaluation complete"
-    done
+    python3 -m src.train_ssl \
+        --encoder        resnet1d \
+        --ssl_mode       hybrid \
+        --augmentation   physio \
+        --use_temporal \
+        --loss_type      ntxent \
+        --mask_ratio     "$RATIO" \
+        --epochs         $EPOCHS \
+        --batch_size     $BS \
+        --lr             $LR \
+        --seed           42 \
+        --data_file      "$DATA" \
+        --output_dir     "$OUT" \
+        --num_workers    4 \
+        2>&1 | tee "logs/mask_${NAME}.log"
+
+    touch "${OUT}/done.flag"
+    echo "  ✅  $NAME done"
+
 done
 
-# ─── Phase 3: Dataset Invariance Diagnostic ──────────────────────────────────
 echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 3: DATASET INVARIANCE DIAGNOSTIC ║"
-echo "╚══════════════════════════════════════════╝"
+echo "BLOCK 3 complete: $(date)"
 
-# Only run if all 3 datasets exist
-PTBXL="data/ptbxl_processed.csv"
-MITBIH="data/mitbih_processed.csv"
-CHAPMAN="data/chapman_processed.csv"
+# ═══════════════════════════════════════════════════════════
+# BLOCK 4: BASELINES
+# ═══════════════════════════════════════════════════════════
+echo ""
+echo "━━━ BLOCK 4: Baselines (2 runs) ━━━"
 
-if [ -f "$PTBXL" ] && [ -f "$MITBIH" ] && [ -f "$CHAPMAN" ]; then
-    for encoder in "${ENCODERS[@]}"; do
-        # Use the hybrid model (expected best) for invariance test
-        CKPT="$RESULTS_DIR/ssl_${encoder}_hybrid/best_checkpoint.pth"
-        if [ -f "$CKPT" ]; then
-            echo "  Testing domain invariance for $encoder (hybrid) ..."
-            python -m src.experiments.dataset_invariance \
-                --encoder "$encoder" \
-                --checkpoint "$CKPT" \
-                --datasets "$PTBXL" "$MITBIH" "$CHAPMAN" \
-                2>&1 | tee "$RESULTS_DIR/domain_invariance_${encoder}.log"
-        fi
-    done
-else
-    echo "  ⚠ Not all 3 datasets found. Skipping invariance diagnostic."
-    echo "    Expected: $PTBXL, $MITBIH, $CHAPMAN"
+# SimCLR style: naive augmentations, pure contrastive
+NAME="simclr_naive_s42"
+OUT="experiments/baselines/${NAME}"
+if [ ! -f "${OUT}/done.flag" ]; then
+    echo "  🚀  $NAME  [naive augmentation + ntxent]"
+    mkdir -p "$OUT"
+    python3 -m src.train_ssl \
+        --encoder        resnet1d \
+        --ssl_mode       contrastive \
+        --augmentation   naive \
+        --no_temporal \
+        --loss_type      ntxent \
+        --epochs         $EPOCHS \
+        --batch_size     $BS \
+        --lr             $LR \
+        --seed           42 \
+        --data_file      "$DATA" \
+        --output_dir     "$OUT" \
+        --num_workers    4 \
+        2>&1 | tee "logs/bl_${NAME}.log"
+    touch "${OUT}/done.flag"
+    echo "  ✅  $NAME done"
 fi
 
-# ─── Phase 4: Few-Shot Evaluation ────────────────────────────────────────────
+# Supervised baseline — no pretraining (random init)
+NAME="supervised_random_init_s42"
+OUT="experiments/baselines/${NAME}"
+if [ ! -f "${OUT}/done.flag" ]; then
+    echo "  🚀  $NAME  [no SSL — just to measure random init ceiling]"
+    mkdir -p "$OUT"
+    python3 -m src.train_ssl \
+        --encoder        resnet1d \
+        --ssl_mode       contrastive \
+        --augmentation   none \
+        --no_temporal \
+        --loss_type      ntxent \
+        --epochs         $EPOCHS \
+        --batch_size     $BS \
+        --lr             $LR \
+        --seed           42 \
+        --data_file      "$DATA" \
+        --output_dir     "$OUT" \
+        --num_workers    4 \
+        2>&1 | tee "logs/bl_${NAME}.log"
+    touch "${OUT}/done.flag"
+    echo "  ✅  $NAME done"
+fi
+
 echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║  PHASE 4: FEW-SHOT EVALUATION       ║"
-echo "╚══════════════════════════════════════╝"
+echo "BLOCK 4 complete: $(date)"
 
-for encoder in "${ENCODERS[@]}"; do
-    for ssl_mode in "${SSL_MODES[@]}"; do
-        EXP_NAME="ssl_${encoder}_${ssl_mode}"
-        CKPT="$RESULTS_DIR/$EXP_NAME/best_checkpoint.pth"
-
-        if [ ! -f "$CKPT" ]; then
-            continue
-        fi
-
-        echo "  Few-shot evaluation for $EXP_NAME ..."
-        python -m src.experiments.few_shot_evaluation \
-            --encoder "$encoder" \
-            --checkpoint "$CKPT" \
-            --data_file "$DATA_FILE" \
-            --output "$RESULTS_DIR/${EXP_NAME}_fewshot.csv" \
-            2>&1 | tee "$RESULTS_DIR/${EXP_NAME}_fewshot.log"
-    done
-done
-
-# ─── Phase 5: Morphology Preservation Diagnostic ──────────────────────────
+# ═══════════════════════════════════════════════════════════
+# BLOCK 5: COMPUTATIONAL COST BENCHMARK
+# ═══════════════════════════════════════════════════════════
 echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 5: MORPHOLOGY PRESERVATION TEST   ║"
-echo "╚══════════════════════════════════════════╝"
+echo "━━━ BLOCK 5: Computational Cost Benchmark ━━━"
 
-echo "  Quantifying augmentation preservation quality..."
-python -m src.experiments.morphology_metrics \
-    --data_file "$DATA_FILE" \
-    --n_samples 500 \
-    --output "$RESULTS_DIR/morphology_preservation.csv" \
-    2>&1 | tee "$RESULTS_DIR/morphology.log"
+python3 -m src.experiments.computational_cost \
+    --output results/compute_cost.csv \
+    2>&1 | tee logs/compute_cost.log
 
-# ─── Phase 6: Noise Robustness Diagnostic ───────────────────────────────
 echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 6: NOISE ROBUSTNESS TEST          ║"
-echo "╚══════════════════════════════════════════╝"
-
-for encoder in "${ENCODERS[@]}"; do
-    CKPT="$RESULTS_DIR/ssl_${encoder}_hybrid/best_checkpoint.pth"
-    if [ -f "$CKPT" ]; then
-        echo "  Testing noise robustness for $encoder (hybrid) ..."
-        python -m src.experiments.noise_robustness \
-            --encoder "$encoder" \
-            --checkpoint "$CKPT" \
-            --data_file "$DATA_FILE" \
-            --output "$RESULTS_DIR/noise_robustness_${encoder}.csv" \
-            2>&1 | tee "$RESULTS_DIR/noise_robustness_${encoder}.log"
-    fi
-done
-
-# ─── Phase 7: Embedding Collapse Diagnostic ─────────────────────────────
-echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 7: EMBEDDING COLLAPSE TEST       ║"
-echo "╚══════════════════════════════════════════╝"
-
-for encoder in "${ENCODERS[@]}"; do
-    CKPT="$RESULTS_DIR/ssl_${encoder}_hybrid/best_checkpoint.pth"
-    if [ -f "$CKPT" ]; then
-        echo "  Analyzing embedding richness for $encoder (hybrid) ..."
-        python -m src.experiments.embedding_analysis \
-            --encoder "$encoder" \
-            --checkpoint "$CKPT" \
-            --data_file "$DATA_FILE" \
-            --output "$RESULTS_DIR/embedding_analysis_${encoder}.json" \
-            2>&1 | tee "$RESULTS_DIR/embedding_analysis_${encoder}.log"
-    fi
-done
-
-# ─── Phase 8: Data Scaling Experiment (Optional) ────────────────────────
-echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 8: PRETRAINING SCALE TEST        ║"
-echo "╚══════════════════════════════════════════╝"
-
-FRACTIONS=(0.25 0.50)
-for frac in "${FRACTIONS[@]}"; do
-    echo "  Running scaling experiment: fraction $frac"
-    python -m src.train_ssl \
-        --encoder resnet1d \
-        --ssl_mode hybrid \
-        --data_file "$DATA_FILE" \
-        --data_fraction "$frac" \
-        --epochs 10 \
-        --exp_name "scaling_$frac" \
-        --results_dir "$RESULTS_DIR/scaling" \
-        2>&1 | tee "$RESULTS_DIR/scaling/log_$frac.txt"
-done
-
-# ─── Phase 9: Augmentation Ablation Diagnostic ──────────────────────────
-echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 9: AUGMENTATION ABLATION TEST     ║"
-echo "╚══════════════════════════════════════════╝"
-
-# Test specific physiological augmentations vs naive
-AUGS=("none" "naive" "physio")
-for aug in "${AUGS[@]}"; do
-    echo "  Testing augmentation impact: $aug"
-    python -m src.train_ssl \
-        --encoder resnet1d \
-        --ssl_mode contrastive \
-        --augmentation "$aug" \
-        --epochs 10 \
-        --exp_name "aug_ablation_$aug" \
-        --output_dir "$RESULTS_DIR/aug_ablation" \
-        2>&1 | tee "$RESULTS_DIR/aug_ablation/log_$aug.txt"
-done
-
-# ─── Phase 10: Raw Dataset Visualization ─────────────────────────────
-echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 10: RAW DATASET DISTRIBUTION     ║"
-echo "╚══════════════════════════════════════════╝"
-
-echo "  Generating Raw ECG UMAP (Domain Shift Proof)..."
-# We assume a small script or plot command exists in plotting.py linked to a runner
-# For now, we'll call a dedicated experiment script if it exists, or just log
-python -m src.experiments.plot_umap \
-    --datasets "$PTBXL" "$MITBIH" "$CHAPMAN" \
-    --encoder resnet1d \
-    --checkpoint "$RESULTS_DIR/ssl_resnet1d_hybrid/best_checkpoint.pth" \
-    --output "$RESULTS_DIR/umap_domain_invariance.png" \
-    2>&1 | tee "$RESULTS_DIR/umap.log"
-
-# ─── Phase 11: Training Stability Analysis ───────────────────────────
-echo ""
-echo "╔══════════════════════════════════════════╗"
-echo "║  PHASE 11: TRAINING STABILITY ANALYSIS   ║"
-echo "╚══════════════════════════════════════════╝"
-
-echo "  Plotting stability curves for best models..."
-# This uses the history.json generated by train_ssl.py
-python -m src.experiments.plot_stability \
-    --results_dir "$RESULTS_DIR" \
-    --output "$RESULTS_DIR/stability_curves.png"
-
-# ─── Summary ──────────────────────────────────────────────────────────────────
-echo ""
-echo "═══════════════════════════════════════════════════════════════"
-echo "  ALL ABLATION PHASES COMPLETE"
-echo "  Results saved to: $RESULTS_DIR/"
-echo "═══════════════════════════════════════════════════════════════"
-echo ""
-echo "  Pretraining logs:"
-for encoder in "${ENCODERS[@]}"; do
-    for ssl_mode in "${SSL_MODES[@]}"; do
-        echo "    - $RESULTS_DIR/ssl_${encoder}_${ssl_mode}/train.log"
-    done
-done
-echo ""
-echo "  Evaluation logs:"
-for encoder in "${ENCODERS[@]}"; do
-    for ssl_mode in "${SSL_MODES[@]}"; do
-        echo "    - $RESULTS_DIR/ssl_${encoder}_${ssl_mode}/eval.log"
-    done
-done
+echo "=================================================="
+echo " ALL DONE: $(date)"
+echo " Completed runs:"
+find experiments -name "done.flag" | wc -l
+echo "=================================================="
