@@ -34,8 +34,11 @@ class ECGBeatDataset(Dataset):
             label_fraction: Fraction of labels to use (for label-efficiency experiments)
             seed: Random seed for label subsampling
         """
-        print(f"Loading ECG dataset from {csv_file}...")
-        df = pd.read_csv(csv_file)
+        if isinstance(csv_file, pd.DataFrame):
+            df = csv_file
+        else:
+            print(f"Loading ECG dataset from {csv_file}...")
+            df = pd.read_csv(csv_file)
         
         # Signal columns
         self.signal_cols = [c for c in df.columns if str(c).isdigit()]

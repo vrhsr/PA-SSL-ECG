@@ -369,18 +369,14 @@ def evaluate(args):
     # ─── Patient-Aware Split ──────────────────────────────────────────────
     train_df, val_df, test_df = patient_aware_split(args.data_file)
     
-    # Save splits for reproducibility
-    split_dir = os.path.join(eval_dir, 'splits')
-    os.makedirs(split_dir, exist_ok=True)
-    train_df.to_csv(os.path.join(split_dir, 'train.csv'), index=False)
-    val_df.to_csv(os.path.join(split_dir, 'val.csv'), index=False)
-    test_df.to_csv(os.path.join(split_dir, 'test.csv'), index=False)
+    # We no longer save massive splits to CSV as it stalls evaluation.
+    # Instead, instantiate datasets directly in-memory from the split DataFrames.
     
     # ─── Representation Quality Metrics ─────────────────────────────────────
     print("\n--- Representation Quality Metrics ---")
     
     try:
-        test_ds_full = ECGBeatDataset(os.path.join(split_dir, 'test.csv'))
+        test_ds_full = ECGBeatDataset(test_df)
         reprs_full, labels_full = extract_representations(encoder, test_ds_full, device)
         
         rep_metrics = representation_quality_metrics(reprs_full, labels_full)
@@ -403,8 +399,8 @@ def evaluate(args):
     
     le_results = label_efficiency_experiment(
         encoder,
-        os.path.join(split_dir, 'train.csv'),
-        os.path.join(split_dir, 'test.csv'),
+        train_df,
+        test_df,
         device,
         fractions=fractions,
         n_seeds=args.n_seeds,
