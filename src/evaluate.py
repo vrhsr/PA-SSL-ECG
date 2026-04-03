@@ -435,7 +435,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=str, required=True)
     parser.add_argument('--data_file', type=str, default='data/ptbxl_processed.csv')
     parser.add_argument('--encoder', type=str, default='resnet1d',
-                        choices=['resnet1d', 'wavkan', 'se_resnet1d34'])
+                        choices=['resnet1d', 'wavkan', 'transformer', 'mamba'])
     
     # Label efficiency
     parser.add_argument('--label_fractions', nargs='+', type=float,
