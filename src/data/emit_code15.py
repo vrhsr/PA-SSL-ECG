@@ -264,38 +264,197 @@ def process_code15(
     print(f"Label distribution:\n{df['label'].value_counts().to_string()}")
 
 
+def process_code15_parts(
+    hdf5_dir: str,
+    metadata_path: str,
+    output_path: str,
+    max_records: Optional[int] = None,
+    lead_name: str = 'DII',
+) -> None:
+    """
+    Process CODE-15% when downloaded as split HDF5 parts via zenodo_get.
+    Expects: exams_part0.hdf5, exams_part1.hdf5, ... in hdf5_dir.
+    """
+    try:
+        import h5py
+    except ImportError:
+        print("h5py required: pip install h5py")
+        return
+
+    import glob
+    part_files = sorted(glob.glob(os.path.join(hdf5_dir, 'exams_part*.hdf5')))
+    if not part_files:
+        print(f"ERROR: No exams_part*.hdf5 files found in {hdf5_dir}")
+        return
+
+    print(f"Found {len(part_files)} part files in {hdf5_dir}")
+    print(f"Loading metadata from {metadata_path}...")
+    meta_df = pd.read_csv(metadata_path)
+    meta_df.columns = [c.strip().lower() for c in meta_df.columns]
+    available_label_cols = [c for c in LABEL_COLUMNS if c.lower() in meta_df.columns]
+    id_col = 'exam_id' if 'exam_id' in meta_df.columns else meta_df.columns[0]
+    meta_lookup = {}
+    for _, row in meta_df.iterrows():
+        eid = str(int(row[id_col]))
+        label = 0
+        for col in available_label_cols:
+            if row.get(col.lower(), 0) == 1:
+                label = LABEL_MAP.get(col, 0)
+                break
+        age = float(row.get('age', row.get('patient_age', 60.0)) or 60.0)
+        sex_raw = str(row.get('sex', row.get('patient_sex', '')) or '')
+        sex = 1.0 if sex_raw.strip().upper().startswith('M') else 0.0
+        meta_lookup[eid] = {'label': label, 'age': age, 'sex': sex}
+
+    lead_names_code15 = ['DI', 'DII', 'DIII', 'AVR', 'AVL', 'AVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+    lead_i = lead_names_code15.index(lead_name) if lead_name in lead_names_code15 else 1
+
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    wrote_header = False
+    total_beats = 0
+    total_records = 0
+    total_skipped = 0
+    records_processed = 0
+
+    for part_path in part_files:
+        part_name = os.path.basename(part_path)
+        if max_records is not None and records_processed >= max_records:
+            break
+
+        print(f"  Processing {part_name}...")
+        all_rows = []
+        skipped = 0
+
+        with h5py.File(part_path, 'r') as f:
+            tracings = f['tracings']
+            exam_ids = f['exam_id'][:]
+            n_total = len(tracings)
+
+            if max_records is not None:
+                n_process = min(max_records - records_processed, n_total)
+            else:
+                n_process = n_total
+
+            for i in tqdm(range(n_process), desc=f'  {part_name}', leave=False):
+                eid = str(int(exam_ids[i]))
+                raw = tracings[i, :, lead_i].astype(np.float32)
+                raw = np.nan_to_num(raw)
+
+                target_len = int(len(raw) * TARGET_FS / SOURCE_FS)
+                signal = resample(raw, target_len).astype(np.float32)
+
+                try:
+                    signal = bandpass_filter(signal, TARGET_FS, FILTER_LOW, FILTER_HIGH)
+                except Exception:
+                    pass
+
+                r_peaks = find_r_peaks(signal)
+                if len(r_peaks) < 2:
+                    skipped += 1
+                    continue
+
+                meta = meta_lookup.get(eid, {'label': 0, 'age': 60.0, 'sex': 0.5})
+                beats = extract_beats(signal, r_peaks)
+
+                for bi, beat in enumerate(beats):
+                    row = {c: beat[c] for c in range(WINDOW_SAMPLES)}
+                    row['label']      = meta['label']
+                    row['patient_id'] = eid
+                    row['record_id']  = eid
+                    row['beat_idx']   = bi
+                    row['r_peak_pos'] = WINDOW_SAMPLES // 2
+                    row['age']        = meta['age']
+                    row['sex']        = meta['sex']
+                    all_rows.append(row)
+
+        records_processed += n_process
+        total_skipped    += skipped
+
+        if all_rows:
+            part_df = pd.DataFrame(all_rows)
+            part_df.to_csv(output_path, mode='a', header=not wrote_header, index=False)
+            wrote_header = True
+            total_beats   += len(part_df)
+            total_records += (n_process - skipped)
+            print(f"    → {len(part_df):,} beats | running total: {total_beats:,}")
+
+    print(f"\n{'='*60}")
+    print(f"CODE-15% Processing Complete")
+    print(f"  Total beats:   {total_beats:,}")
+    print(f"  Records used:  {total_records:,}")
+    print(f"  Skipped:       {total_skipped:,}")
+    print(f"  Saved to:      {output_path}")
+    print(f"{'='*60}")
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
         description='Process CODE-15% ECG dataset (Ribeiro et al., Nature Communications 2021)'
     )
-    parser.add_argument('--hdf5', type=str, default='data/code15/code15.h5',
-                        help='Path to CODE-15% HDF5 waveform file')
+    parser.add_argument('--hdf5', type=str, default=None,
+                        help='Path to single CODE-15% HDF5 file (legacy single-file format)')
+    parser.add_argument('--hdf5_dir', type=str, default=None,
+                        help='Path to directory containing exams_part*.hdf5 files (Zenodo multi-part format)')
     parser.add_argument('--metadata', type=str, default='data/code15/exams.csv',
                         help='Path to CODE-15% exams.csv metadata')
     parser.add_argument('--output', type=str, default='data/code15_processed.csv',
                         help='Output CSV path')
     parser.add_argument('--max_records', type=int, default=None,
-                        help='Maximum number of records to process (default: all)')
+                        help='Maximum number of records to process (default: all ~345K)')
     parser.add_argument('--lead', type=str, default='DII',
                         help='ECG lead to extract (default: DII = Lead II)')
     args = parser.parse_args()
 
-    print(f"Processing CODE-15% ECG dataset")
-    print(f"  HDF5: {args.hdf5}")
-    print(f"  Metadata: {args.metadata}")
-    print(f"  Output: {args.output}")
-    if args.max_records:
-        print(f"  Max records: {args.max_records:,}")
-
-    process_code15(
-        hdf5_path=args.hdf5,
-        metadata_path=args.metadata,
-        output_path=args.output,
-        max_records=args.max_records,
-        lead_name=args.lead,
-    )
+    if args.hdf5_dir:
+        print(f"Processing CODE-15% (multi-part HDF5 format)")
+        print(f"  HDF5 dir: {args.hdf5_dir}")
+        print(f"  Metadata: {args.metadata}")
+        print(f"  Output:   {args.output}")
+        if args.max_records:
+            print(f"  Max records: {args.max_records:,}")
+        process_code15_parts(
+            hdf5_dir=args.hdf5_dir,
+            metadata_path=args.metadata,
+            output_path=args.output,
+            max_records=args.max_records,
+            lead_name=args.lead,
+        )
+    elif args.hdf5:
+        print(f"Processing CODE-15% ECG dataset")
+        print(f"  HDF5: {args.hdf5}")
+        print(f"  Metadata: {args.metadata}")
+        print(f"  Output: {args.output}")
+        if args.max_records:
+            print(f"  Max records: {args.max_records:,}")
+        process_code15(
+            hdf5_path=args.hdf5,
+            metadata_path=args.metadata,
+            output_path=args.output,
+            max_records=args.max_records,
+            lead_name=args.lead,
+        )
+    else:
+        # Auto-detect
+        if os.path.exists('data/code15/extracted'):
+            process_code15_parts(
+                hdf5_dir='data/code15/extracted',
+                metadata_path=args.metadata,
+                output_path=args.output,
+                max_records=args.max_records,
+                lead_name=args.lead,
+            )
+        elif os.path.exists('data/code15/code15.h5'):
+            process_code15(
+                hdf5_path='data/code15/code15.h5',
+                metadata_path=args.metadata,
+                output_path=args.output,
+                max_records=args.max_records,
+                lead_name=args.lead,
+            )
+        else:
+            print("ERROR: No CODE-15% data found. Use --hdf5_dir or --hdf5.")
 
 
 if __name__ == '__main__':
