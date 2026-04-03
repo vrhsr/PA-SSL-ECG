@@ -440,8 +440,8 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='experiments')
     
     # Model
-    parser.add_argument('--encoder', type=str, default='resnet1d', 
-                        choices=['resnet1d', 'wavkan'])
+    parser.add_argument('--encoder', type=str, default='resnet1d',
+                        choices=['resnet1d', 'wavkan', 'transformer', 'mamba'])
     parser.add_argument('--proj_dim', type=int, default=128)
     
     # Augmentation
