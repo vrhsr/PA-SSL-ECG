@@ -95,24 +95,52 @@ def process_chapman(output_file=None, data_dir=None):
         print(f"  wfdb.dl_database('chapman-shaoxing', '{DATA_DIR}')")
         return None
     
-    # Try to download via wfdb if directory is empty
-    dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.mat') or f.endswith('.hea')] if os.path.exists(DATA_DIR) else []
+    # Try to download via wfdb if directory is empty, otherwise search recursively for actual .mat files
+    dat_files = []
+    actual_data_dir = DATA_DIR
+    if os.path.exists(DATA_DIR):
+        for root, dirs, files in os.walk(DATA_DIR):
+            mat_files = [f for f in files if f.endswith('.mat')]
+            if len(mat_files) > 0:
+                actual_data_dir = root
+                dat_files = mat_files
+                break
+                
     if len(dat_files) == 0:
         print("Attempting to download Chapman-Shaoxing via wfdb...")
         try:
             wfdb.dl_database('chapman-shaoxing', DATA_DIR)
-            dat_files = [f for f in os.listdir(DATA_DIR) if f.endswith('.mat')]
+            actual_data_dir = DATA_DIR
         except Exception as e:
             print(f"Download failed: {e}")
             print("Please download manually from PhysioNet.")
             return None
+            
+    # Redefine dat_files from actual_data_dir
+    dat_files = [f for f in os.listdir(actual_data_dir) if f.endswith('.mat')]
+    dat_files.sort()
     
-    # Load reference/labels CSV if available
-    label_file = os.path.join(DATA_DIR, 'REFERENCE.csv')
+    print(f"Found {len(dat_files)} recording files in {actual_data_dir}")
+    
+    # Load reference/labels CSV if available - check recursively as well
+    label_file = os.path.join(actual_data_dir, 'Diagnostics.xlsx')
     label_df = None
+    
+    # Let's search recursively for any Excel/CSV reference file just in case
+    if not os.path.exists(label_file):
+        for root, dirs, files in os.walk(DATA_DIR):
+            for f in files:
+                if 'Diagnostics' in f or 'REFERENCE' in f:
+                    if f.endswith('.xlsx') or f.endswith('.csv'):
+                        label_file = os.path.join(root, f)
+                        break
+
     if os.path.exists(label_file):
-        label_df = pd.read_csv(label_file)
-        print(f"Loaded {len(label_df)} label entries from REFERENCE.csv")
+        if label_file.endswith('.xlsx'):
+            label_df = pd.read_excel(label_file)
+        else:
+            label_df = pd.read_csv(label_file)
+        print(f"Loaded {len(label_df)} label entries from {os.path.basename(label_file)}")
     
     # Recursively find all .mat records
     records_with_paths = []
