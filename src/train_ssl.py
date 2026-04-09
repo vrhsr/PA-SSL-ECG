@@ -283,6 +283,7 @@ def train_ssl(args):
     print(f"\nStarting Pretraining ({args.epochs} epochs)...")
     start_time_total = time.time()
     
+    is_interactive = sys.stdout.isatty()
     for epoch in range(start_epoch, args.epochs):
         epoch_start_time = time.time()
         model.train()
@@ -298,10 +299,10 @@ def train_ssl(args):
         else:
             mae_lambda = args.mae_weight
         
-        # Optimized tqdm for background/nohup execution (mininterval=10s for clean logs)
+        # Adaptive tqdm: 0.1s updates for live tmux, 10s for clean nohup logs
         pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}",
-                    disable=(not is_interactive),
-                    mininterval=10.0,
+                    disable=False,
+                    mininterval=(0.1 if is_interactive else 10.0),
                     ncols=100)
         
         for batch_idx, batch in enumerate(pbar):
