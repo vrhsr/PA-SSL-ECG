@@ -108,10 +108,10 @@ for config in "${CONFIGS[@]}"; do
         $temp \
         --loss_type "$loss" \
         --epochs 1 \
-        --batch_size 128 \
+        --batch_size 256 \
         --max_batches 10 \
         --seed 42 \
-        --num_workers 8 \
+        --num_workers 12 \
         --output_dir "experiments/smoke/ssl_${name}" \
         2>&1 | tee "$LOG_DIR/smoke_ssl_${name}.log"
     
@@ -217,9 +217,9 @@ for config in "${CONFIGS[@]}"; do
             $temp \
             --loss_type "$loss" \
             --epochs 100 \
-            --batch_size 512 \
+            --batch_size 1024 \
             --seed 42 \
-            --num_workers 16 \
+            --num_workers 24 \
             --output_dir "$out_dir" \
             2>&1 | tee "$LOG_DIR/full_ssl_${name}.log"
         echo "  ✓ $name training complete"

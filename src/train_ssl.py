@@ -62,6 +62,11 @@ def train_ssl(args):
         torch.backends.cudnn.deterministic = True
         print(f"  Random seed: {args.seed}")
     
+    # Performance: Enable TF32 for Ampere+ GPUs (like A4000)
+    if torch.cuda.is_available() and sys.platform != "win32":
+        print("  Enabling TF32 (TensorFloat-32) for hardware-accelerated matrix math")
+        torch.set_float32_matmul_precision('high')
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n{'='*60}")
     print(f"PA-SSL Pretraining")
@@ -116,7 +121,8 @@ def train_ssl(args):
     
     # PyTorch DataLoader optimization for Windows: Keep workers alive across epochs
     # to prevent the massive delay when recreating processes CPU-side.
-    prefetch = max(2, 16 // max(1, args.num_workers)) if args.num_workers > 0 else None
+    # Extreme Data Flow: 2x prefetch baseline for high-bandwidth training
+    prefetch = max(4, 32 // max(1, args.num_workers)) if args.num_workers > 0 else None
     
     loader = DataLoader(
         dataset,
