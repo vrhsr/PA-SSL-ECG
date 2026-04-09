@@ -298,38 +298,60 @@ def train_ssl(args):
         else:
             mae_lambda = args.mae_weight
         
-        # Only show tqdm progress bar in interactive terminals (not file redirect)
+        # Optimized tqdm for background/nohup execution (mininterval=10s for clean logs)
         pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{args.epochs}",
-                    disable=(not is_interactive))
+                    disable=(not is_interactive),
+                    mininterval=10.0,
+                    ncols=100)
         
         for batch_idx, batch in enumerate(pbar):
             if args.max_batches is not None and batch_idx >= args.max_batches:
                 break
-            view1 = batch['view1'].to(device)
-            view2 = batch['view2'].to(device)
+            # Async memory transfers
+            view1 = batch['view1'].to(device, non_blocking=True)
+            view2 = batch['view2'].to(device, non_blocking=True)
             
             temporal_view = None
             has_temporal = None
             metadata = None
             
             if 'metadata' in batch and args.use_metadata:
-                metadata = batch['metadata'].to(device)
+                metadata = batch['metadata'].to(device, non_blocking=True)
                 
             if 'temporal_view' in batch:
-                temporal_view = batch['temporal_view'].to(device)
-                has_temporal = batch['has_temporal'].to(device)
+                temporal_view = batch['temporal_view'].to(device, non_blocking=True)
+                has_temporal = batch['has_temporal'].to(device, non_blocking=True)
             
             optimizer.zero_grad()
             
             def compute_batch_loss():
                 loss, loss_aug, loss_temp, loss_mae = 0.0, torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0)
                 
-                # 1. Contrastive Path
+                # 1. Contrastive Path (Unified Forward Pass)
                 if args.ssl_mode in ['contrastive', 'hybrid']:
                     enc_model = model.encoder if args.ssl_mode == 'hybrid' else model
-                    z1 = enc_model(view1, return_projection=True, metadata=metadata)
-                    z2 = enc_model(view2, return_projection=True, metadata=metadata)
-                    z_temp = enc_model(temporal_view, return_projection=True, metadata=metadata) if temporal_view is not None else None
+                    
+                    # Concat views for single forward pass (Industrial throughput trick)
+                    views_to_cat = [view1, view2]
+                    if temporal_view is not None:
+                        views_to_cat.append(temporal_view)
+                    
+                    x_combined = torch.cat(views_to_cat, dim=0)
+                    
+                    # Align metadata if used
+                    meta_combined = None
+                    if metadata is not None:
+                        meta_to_cat = [metadata] * len(views_to_cat)
+                        meta_combined = torch.cat(meta_to_cat, dim=0)
+                    
+                    # Single forward call
+                    z_all = enc_model(x_combined, return_projection=True, metadata=meta_combined)
+                    
+                    # Split back
+                    z_chunks = torch.chunk(z_all, len(views_to_cat), dim=0)
+                    z1, z2 = z_chunks[0], z_chunks[1]
+                    z_temp = z_chunks[2] if len(z_chunks) > 2 else None
+                    
                     loss_c, loss_aug, loss_temp = criterion(z1, z2, z_temp, has_temporal)
                     loss += loss_c
                 

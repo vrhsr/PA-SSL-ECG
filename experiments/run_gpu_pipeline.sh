@@ -111,7 +111,7 @@ for config in "${CONFIGS[@]}"; do
         --batch_size 256 \
         --max_batches 10 \
         --seed 42 \
-        --num_workers 12 \
+        --num_workers 4 \
         --output_dir "experiments/smoke/ssl_${name}" \
         2>&1 | tee "$LOG_DIR/smoke_ssl_${name}.log"
     
@@ -219,7 +219,7 @@ for config in "${CONFIGS[@]}"; do
             --epochs 100 \
             --batch_size 1024 \
             --seed 42 \
-            --num_workers 24 \
+            --num_workers 4 \
             --output_dir "$out_dir" \
             2>&1 | tee "$LOG_DIR/full_ssl_${name}.log"
         echo "  ✓ $name training complete"
