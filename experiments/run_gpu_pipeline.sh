@@ -29,19 +29,18 @@ echo "================================================================"
 # ─── GPU Check ───────────────────────────────────────────────────────────────
 echo ""
 echo "[0/9] Checking GPU availability..."
-python -c "
-import torch
-print(f'PyTorch version: {torch.__version__}')
-print(f'CUDA available: {torch.cuda.is_available()}')
-if torch.cuda.is_available():
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
-    print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
-    print(f'CUDA version: {torch.version.cuda}')
-else:
-    echo 'WARNING: No GPU detected! Training will be extremely slow.'
-    echo 'Press Ctrl+C within 10 seconds to abort...'
+if ! python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+    echo "  [WARNING] No GPU detected via torch.cuda.is_available()!"
+    echo "  Training will be extremely slow. Press Ctrl+C in 10s to abort..."
     sleep 10
+else
+    python3 -c "
+import torch
+print(f'  PyTorch version: {torch.__version__}')
+print(f'  GPU: {torch.cuda.get_device_name(0)}')
+print(f'  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
 "
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STEP 1: DATA PROCESSING
