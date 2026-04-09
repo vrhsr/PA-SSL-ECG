@@ -50,21 +50,21 @@ echo "[1/9] Processing Datasets..."
 
 if [ ! -f "data/ptbxl_processed.csv" ]; then
     echo "  Processing PTB-XL..."
-    python -m src.data.emit_ptbxl --output data/ptbxl_processed.csv 2>&1 | tee "$LOG_DIR/data_ptbxl.log"
+    python3 -m src.data.emit_ptbxl --output data/ptbxl_processed.csv 2>&1 | tee "$LOG_DIR/data_ptbxl.log"
 else
     echo "  PTB-XL already processed. ✓"
 fi
 
 if [ ! -f "data/mitbih_processed.csv" ]; then
     echo "  Processing MIT-BIH..."
-    python -m src.data.emit_mitbih --output data/mitbih_processed.csv 2>&1 | tee "$LOG_DIR/data_mitbih.log"
+    python3 -m src.data.emit_mitbih --output data/mitbih_processed.csv 2>&1 | tee "$LOG_DIR/data_mitbih.log"
 else
     echo "  MIT-BIH already processed. ✓"
 fi
 
 if [ ! -f "data/chapman_processed.csv" ]; then
     echo "  Processing Chapman..."
-    python -m src.data.emit_chapman --output data/chapman_processed.csv 2>&1 | tee "$LOG_DIR/data_chapman.log"
+    python3 -m src.data.emit_chapman --output data/chapman_processed.csv 2>&1 | tee "$LOG_DIR/data_chapman.log"
 else
     echo "  Chapman already processed. ✓"
 fi
@@ -102,7 +102,7 @@ echo "[2/9] Smoke Test: SSL Pretraining (4 variants × 1 epoch × 10 batches)...
 for config in "${CONFIGS[@]}"; do
     IFS='|' read -r name enc aug temp loss <<< "$config"
     echo "  Training: $name..."
-    python -m src.train_ssl \
+    python3 -m src.train_ssl \
         --encoder "$enc" \
         --augmentation "$aug" \
         $temp \
@@ -127,7 +127,7 @@ done
 # Baselines (smoke)
 echo ""
 echo "[3/9] Smoke Test: Baselines (1 epoch, 10 batches)..."
-python -m src.baselines \
+python3 -m src.baselines \
     --data_csv data/ptbxl_processed.csv \
     --naive_checkpoint experiments/smoke/ssl_simclr_naive_resnet/best_checkpoint.pth \
     --output_dir experiments/smoke/baselines \
@@ -211,7 +211,7 @@ for config in "${CONFIGS[@]}"; do
         echo "  $name already trained. Skipping. ✓"
     else
         echo "  Training: $name (full)..."
-        python -m src.train_ssl \
+        python3 -m src.train_ssl \
             --encoder "$enc" \
             --augmentation "$aug" \
             $temp \
@@ -229,7 +229,7 @@ done
 # Baselines (full)
 echo ""
 echo "[7/9] Full Baselines (50 epochs)..."
-python -m src.baselines \
+python3 -m src.baselines \
     --data_csv data/ptbxl_processed.csv \
     --naive_checkpoint experiments/ssl_simclr_naive_resnet/best_checkpoint.pth \
     --output_dir experiments/baselines \
@@ -243,7 +243,7 @@ for config in "${CONFIGS[@]}"; do
     IFS='|' read -r name enc aug temp loss <<< "$config"
     if [ "$name" != "simclr_naive_resnet" ]; then
         echo "  Evaluating: $name on PTB-XL..."
-        python -m src.evaluate \
+        python3 -m src.evaluate \
             --checkpoint "experiments/ssl_${name}/best_checkpoint.pth" \
             --data_file data/ptbxl_processed.csv \
             --encoder "$enc" \
@@ -253,14 +253,14 @@ done
 
 # Cross-dataset transfer — use hybrid ResNet1D (expected best)
 echo "  Cross-dataset: MIT-BIH..."
-python -m src.evaluate \
+python3 -m src.evaluate \
     --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/mitbih_processed.csv \
     --encoder resnet1d \
     2>&1 | tee "$LOG_DIR/full_transfer_mitbih.log"
 
 echo "  Cross-dataset: Chapman..."
-python -m src.evaluate \
+python3 -m src.evaluate \
     --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/chapman_processed.csv \
     --encoder resnet1d \
@@ -272,10 +272,10 @@ echo "[9/9] Generating Figures & Running Ablations..."
 mkdir -p figures
 
 # QRS Validation
-python -m src.augmentations.visualize_and_test --test --visualize 2>&1 | tee "$LOG_DIR/full_qrs.log" || true
+python3 -m src.augmentations.visualize_and_test --test --visualize 2>&1 | tee "$LOG_DIR/full_qrs.log" || true
 
 # Ablation Suite
-python -c "
+python3 -c "
 from src.experiments import run_ablation_suite
 import pandas as pd
 from src.plotting import plot_ablation_bars
@@ -285,7 +285,7 @@ print('Ablation complete!')
 " 2>&1 | tee "$LOG_DIR/full_ablation.log" || true
 
 # UMAP — dual colored (by dataset + by condition) using best hybrid ResNet model
-python -m src.experiments.plot_umap \
+python3 -m src.experiments.plot_umap \
     --encoder resnet1d \
     --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --datasets data/ptbxl_processed.csv data/mitbih_processed.csv data/chapman_processed.csv \
@@ -294,14 +294,14 @@ python -m src.experiments.plot_umap \
     2>&1 | tee "$LOG_DIR/full_umap.log" || true
 
 # Grad-CAM
-python -m src.gradcam \
+python3 -m src.gradcam \
     --checkpoint experiments/ssl_passl_resnet_hybrid/best_checkpoint.pth \
     --data_file data/ptbxl_processed.csv \
     --output figures/gradcam_passl_hybrid.png \
     2>&1 | tee "$LOG_DIR/full_gradcam.log" || true
 
 # OOD & Robustness
-python -c "
+python3 -c "
 from src.experiments import robustness_experiment, ood_detection_experiment
 from src.models.encoder import build_encoder
 import torch, json
