@@ -149,8 +149,15 @@ def train_ssl(args):
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
     
-    # torch.compile is disabled on Windows due to encoding/dynamo issues
-    print("  Running in eager mode (torch.compile disabled for compatibility)")
+    # Optimization: torch.compile for Linux
+    if sys.platform != "win32" and hasattr(torch, "compile"):
+        print("  Enabling torch.compile for high-throughput GPU utilization (Linux)")
+        try:
+            model = torch.compile(model)
+        except Exception as e:
+            print(f"  [WARN] torch.compile failed: {e}. Falling back to eager mode.")
+    else:
+        print("  Running in eager mode (torch.compile disabled for Windows/unsupported)")
     
     # ─── Optimizer ────────────────────────────────────────────────────────
     optimizer = optim.AdamW(
@@ -203,6 +210,7 @@ def train_ssl(args):
     # ─── Training Loop ────────────────────────────────────────────────────
     best_loss = float('inf')
     history = []
+    batch_history = []
     is_interactive = sys.stdout.isatty()  # Detect if running in a terminal vs redirected to file
     
     start_epoch = 0
@@ -247,7 +255,12 @@ def train_ssl(args):
             if os.path.exists(history_path):
                 try:
                     with open(history_path, 'r') as f:
-                        history = json.load(f)
+                        saved_history = json.load(f)
+                        if isinstance(saved_history, dict):
+                            history = saved_history.get('epochs', [])
+                            batch_history = saved_history.get('batches', [])
+                        else:
+                            history = saved_history
                 except Exception as e:
                     print(f"  Warning: Could not load history.json ({e})")
     
@@ -260,7 +273,6 @@ def train_ssl(args):
     print(f"  Device:               {device}")
     
     # 2.4 Resumption/Stability Logging
-    batch_history = [] # For finer stability curves
     
     print(f"\nStarting Pretraining ({args.epochs} epochs)...")
     start_time_total = time.time()
@@ -481,8 +493,10 @@ if __name__ == "__main__":
     # Performance
     parser.add_argument('--amp', action='store_true', default=True,
                         help='Use mixed precision training')
-    parser.add_argument('--num_workers', type=int, default=8 if os.name != 'nt' else 0,
-                        help='Number of workers (0 on Windows to avoid paging file crashes)')
+    parser.add_argument('--num_workers', type=int, default=8,
+                        help='Number of data loader workers')
+    parser.add_argument('--compile', action='store_true', default=os.name != 'nt',
+                        help='Use torch.compile for speed (Linux only)')
     
     # Reproducibility
     parser.add_argument('--seed', type=int, default=42,

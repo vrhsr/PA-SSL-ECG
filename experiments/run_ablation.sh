@@ -7,6 +7,7 @@
 #   --no_qrs_protect: flag to disable QRS protection
 
 set -e  # stop on first error
+set -o pipefail # ensure exit codes propagate through pipes
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
 DATA="${1:-data/ptbxl_processed.csv}"
@@ -70,7 +71,7 @@ for MODE in contrastive mae hybrid; do
         --data_file      "$DATA" \
         --output_dir     "$OUT" \
         --save_every     20 \
-        --num_workers    4 \
+        --num_workers    0 \
         2>&1 | tee "logs/abl_${NAME}.log"
 
     touch "${OUT}/done.flag"
