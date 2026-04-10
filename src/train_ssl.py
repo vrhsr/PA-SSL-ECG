@@ -157,9 +157,10 @@ def train_ssl(args):
     
     # Optimization: torch.compile for Linux
     if sys.platform != "win32" and hasattr(torch, "compile"):
-        print("  Enabling torch.compile for high-throughput GPU utilization (Linux)")
+        print("  Enabling torch.compile (reduce-overhead) for high-throughput GPU utilization (Linux)")
         try:
-            model = torch.compile(model)
+            # "reduce-overhead" is optimal for repetitive batch shapes like ECG beats
+            model = torch.compile(model, mode="reduce-overhead")
         except Exception as e:
             print(f"  [WARN] torch.compile failed: {e}. Falling back to eager mode.")
     else:
@@ -170,6 +171,7 @@ def train_ssl(args):
         model_params,
         lr=args.lr,
         weight_decay=args.weight_decay,
+        fused=True  # Reduce memory-bandwidth bottleneck during parameter updates
     )
     
     # Cosine LR schedule with warmup

@@ -221,9 +221,9 @@ for config in "${CONFIGS[@]}"; do
             --loss_type "$loss" \
             --ssl_mode "$mode" \
             --epochs 100 \
-            --batch_size 1024 \
+            --batch_size 1280 \
             --seed 42 \
-            --num_workers 4 \
+            --num_workers 12 \
             --output_dir "$out_dir" \
             2>&1 | tee "$LOG_DIR/full_ssl_${name}.log"
         echo "  ✓ $name training complete"
