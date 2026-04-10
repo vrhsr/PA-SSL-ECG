@@ -26,15 +26,6 @@ echo "PA-SSL: Unified GPU Pipeline"
 echo "Started at: $(date)"
 echo "================================================================"
 
-# ─── Clean Start ─────────────────────────────────────────────────────────────
-# Wiping old experiments to ensure a fresh "Extreme Performance" run.
-# (Keeping processed CSV data to save pre-processing time)
-echo "[CLEAN START] Wiping old experiments and logs..."
-rm -rf experiments/ssl_* experiments/smoke experiments/baselines experiments/ablations
-rm -rf results/*
-rm -rf figures/*
-mkdir -p experiments logs results figures
-
 # ─── GPU Check ───────────────────────────────────────────────────────────────
 echo ""
 echo "[0/9] Checking GPU availability..."
@@ -219,20 +210,24 @@ for config in "${CONFIGS[@]}"; do
     IFS='|' read -r name enc aug temp loss mode <<< "$config"
     out_dir="experiments/ssl_${name}"
     
-    echo "  Training: $name (full)..."
-    python3 -m src.train_ssl \
-        --encoder "$enc" \
-        --augmentation "$aug" \
-        $temp \
-        --loss_type "$loss" \
-        --ssl_mode "$mode" \
-        --epochs 100 \
-        --batch_size 1024 \
-        --seed 42 \
-        --num_workers 4 \
-        --output_dir "$out_dir" \
-        2>&1 | tee "$LOG_DIR/full_ssl_${name}.log"
-    echo "  ✓ $name training complete"
+    if [ -f "${out_dir}/history.json" ]; then
+        echo "  $name already trained. Skipping. ✓"
+    else
+        echo "  Training: $name (full)..."
+        python3 -m src.train_ssl \
+            --encoder "$enc" \
+            --augmentation "$aug" \
+            $temp \
+            --loss_type "$loss" \
+            --ssl_mode "$mode" \
+            --epochs 100 \
+            --batch_size 1024 \
+            --seed 42 \
+            --num_workers 4 \
+            --output_dir "$out_dir" \
+            2>&1 | tee "$LOG_DIR/full_ssl_${name}.log"
+        echo "  ✓ $name training complete"
+    fi
 done
 
 # Baselines (full)
