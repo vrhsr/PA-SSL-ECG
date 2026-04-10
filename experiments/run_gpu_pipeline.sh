@@ -87,26 +87,29 @@ mkdir -p experiments/smoke
 # SSL Pretraining Matrix (smoke) — 3×2 factorial:
 #   Encoders:  resnet1d | wavkan
 #   SSL Modes: ntxent   | vicreg | hybrid
+# SSL Pretraining Matrix (smoke) — 3×2 factorial + hybrid:
+# Format: "Name | Encoder | Augmentation | TemporalFlag | LossType | SSLMode"
 CONFIGS=(
-    "simclr_naive_resnet|resnet1d|naive|--no_temporal|ntxent"
-    "passl_resnet_ntxent|resnet1d|physio|--use_temporal|ntxent"
-    "passl_resnet_vicreg|resnet1d|physio|--use_temporal|vicreg"
-    "passl_resnet_hybrid|resnet1d|physio|--use_temporal|hybrid"
-    "passl_wavkan_ntxent|wavkan|physio|--use_temporal|ntxent"
-    "passl_wavkan_vicreg|wavkan|physio|--use_temporal|vicreg"
-    "passl_wavkan_hybrid|wavkan|physio|--use_temporal|hybrid"
+    "simclr_naive_resnet|resnet1d|naive|--no_temporal|ntxent|contrastive"
+    "passl_resnet_ntxent|resnet1d|physio|--use_temporal|ntxent|contrastive"
+    "passl_resnet_vicreg|resnet1d|physio|--use_temporal|vicreg|contrastive"
+    "passl_resnet_hybrid|resnet1d|physio|--use_temporal|ntxent|hybrid"
+    "passl_wavkan_ntxent|wavkan|physio|--use_temporal|ntxent|contrastive"
+    "passl_wavkan_vicreg|wavkan|physio|--use_temporal|vicreg|contrastive"
+    "passl_wavkan_hybrid|wavkan|physio|--use_temporal|ntxent|hybrid"
 )
 
 echo ""
 echo "[2/9] Smoke Test: SSL Pretraining (4 variants × 1 epoch × 10 batches)..."
 for config in "${CONFIGS[@]}"; do
-    IFS='|' read -r name enc aug temp loss <<< "$config"
+    IFS='|' read -r name enc aug temp loss mode <<< "$config"
     echo "  Training: $name..."
     python3 -m src.train_ssl \
         --encoder "$enc" \
         --augmentation "$aug" \
         $temp \
         --loss_type "$loss" \
+        --ssl_mode "$mode" \
         --epochs 1 \
         --batch_size 256 \
         --max_batches 10 \
@@ -204,7 +207,7 @@ echo "================================================================"
 echo ""
 echo "[6/9] Full SSL Pretraining (7 variants × 100 epochs)..."
 for config in "${CONFIGS[@]}"; do
-    IFS='|' read -r name enc aug temp loss <<< "$config"
+    IFS='|' read -r name enc aug temp loss mode <<< "$config"
     out_dir="experiments/ssl_${name}"
     
     if [ -f "${out_dir}/history.json" ]; then
@@ -216,6 +219,7 @@ for config in "${CONFIGS[@]}"; do
             --augmentation "$aug" \
             $temp \
             --loss_type "$loss" \
+            --ssl_mode "$mode" \
             --epochs 100 \
             --batch_size 1024 \
             --seed 42 \
