@@ -32,7 +32,7 @@ from src.evaluate import extract_representations, linear_probe
 # 1. RANDOM INITIALIZATION BASELINE
 # ==============================================================================
 
-def evaluate_random_init(data_csv, device, encoder_type='resnet1d', n_seeds=3):
+def evaluate_random_init(data_csv, device, encoder_type='resnet1d', n_seeds=3, max_batches=None):
     """
     Evaluate a randomly initialized (untrained) encoder.
     This is the lower-bound baseline.
@@ -59,7 +59,7 @@ def evaluate_random_init(data_csv, device, encoder_type='resnet1d', n_seeds=3):
         encoder.eval()
         
         dataset = ECGBeatDataset(data_csv)
-        reprs, labels = extract_representations(encoder, dataset, device)
+        reprs, labels = extract_representations(encoder, dataset, device, max_batches=max_batches)
         
         # Split
         n = len(labels)
@@ -236,7 +236,7 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
 # 3. CLOCS-STYLE BASELINE (Patient-level contrastive, NO physio augmentations)
 # ==============================================================================
 
-def evaluate_clocs_style(checkpoint_path, data_csv, device, n_seeds=3):
+def evaluate_clocs_style(checkpoint_path, data_csv, device, n_seeds=3, max_batches=None):
     """
     Evaluate a CLOCS-style trained encoder (naive augmentations only).
     Uses the ablation checkpoint: ssl_resnet1d_naive/best_checkpoint.pth
@@ -266,7 +266,7 @@ def evaluate_clocs_style(checkpoint_path, data_csv, device, n_seeds=3):
     encoder.eval()
     
     dataset = ECGBeatDataset(data_csv)
-    reprs, labels = extract_representations(encoder, dataset, device)
+    reprs, labels = extract_representations(encoder, dataset, device, max_batches=max_batches)
     
     for seed in range(n_seeds):
         np.random.seed(seed)
@@ -468,32 +468,32 @@ def run_all_baselines(data_csv, device, naive_checkpoint=None, output_dir='exper
     
     # 1. Random init
     print("\n=== Evaluating Random Initialization Baseline ===")
-    random_results = evaluate_random_init(data_csv, device)
+    random_results = evaluate_random_init(data_csv, device, max_batches=max_batches)
     random_results.to_csv(os.path.join(output_dir, 'random_init_results.csv'), index=False)
     all_results.append(random_results)
     
     # 2. Supervised
     print("\n=== Training Supervised Baseline ===")
-    supervised_results = train_supervised(data_csv, device, epochs=epochs)
+    supervised_results = train_supervised(data_csv, device, epochs=epochs, max_batches=max_batches)
     supervised_results.to_csv(os.path.join(output_dir, 'supervised_results.csv'), index=False)
     all_results.append(supervised_results)
     
     # 3. TS2Vec Official
     print("\n=== Training & Evaluating TS2Vec (Official) Baseline ===")
-    ts2vec_results = train_and_evaluate_ts2vec(data_csv, device, epochs=epochs)
+    ts2vec_results = train_and_evaluate_ts2vec(data_csv, device, epochs=epochs, max_batches=max_batches)
     ts2vec_results.to_csv(os.path.join(output_dir, 'ts2vec_results.csv'), index=False)
     all_results.append(ts2vec_results)
     
     # 4. TFC Official
     print("\n=== Training & Evaluating TFC (Official) Baseline ===")
-    tfc_results = train_and_evaluate_tfc(data_csv, device, epochs=epochs)
+    tfc_results = train_and_evaluate_tfc(data_csv, device, epochs=epochs, max_batches=max_batches)
     tfc_results.to_csv(os.path.join(output_dir, 'tfc_results.csv'), index=False)
     all_results.append(tfc_results)
     
     # 5. CLOCS-style (if checkpoint exists)
     if naive_checkpoint and os.path.exists(naive_checkpoint):
         print("\n=== Evaluating CLOCS-style Baseline ===")
-        clocs_results = evaluate_clocs_style(naive_checkpoint, data_csv, device)
+        clocs_results = evaluate_clocs_style(naive_checkpoint, data_csv, device, max_batches=max_batches)
         clocs_results.to_csv(os.path.join(output_dir, 'clocs_style_results.csv'), index=False)
         all_results.append(clocs_results)
     

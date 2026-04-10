@@ -51,7 +51,11 @@ def extract_representations(encoder, dataset, device, batch_size=256, max_batche
     all_reprs = []
     all_labels = []
     
-    for batch_idx, batch in enumerate(loader):
+    # Add progress bar for visibility during extraction
+    pbar = tqdm(loader, desc="Extracting Representations", 
+                leave=False, disable=(max_batches is not None and max_batches < 50))
+    
+    for batch_idx, batch in enumerate(pbar):
         if max_batches is not None and batch_idx >= max_batches:
             break
         signals, labels = batch[0], batch[1]
