@@ -223,7 +223,7 @@ for config in "${CONFIGS[@]}"; do
             --epochs 100 \
             --batch_size 1280 \
             --seed 42 \
-            --num_workers 12 \
+            --num_workers 4 \
             --output_dir "$out_dir" \
             2>&1 | tee "$LOG_DIR/full_ssl_${name}.log"
         echo "  ✓ $name training complete"

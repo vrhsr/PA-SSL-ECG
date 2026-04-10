@@ -30,20 +30,21 @@ from src.models.mae import HybridMAE
 from src.losses import CombinedContrastiveLoss
 from src.augmentations.augmentation_pipeline import PhysioAugPipeline
 from src.augmentations.naive_augmentations import NaiveAugPipeline
+from src.augmentations.gpu_augmentations import get_gpu_augmentations
 
 
 def ssl_collate_fn(batch):
-    """Custom collate for SSLECGDataset that handles temporal views."""
+    """Custom collate for SSLECGDataset that handles raw views for GPU-accel."""
     view1 = torch.stack([item['view1'] for item in batch])
-    view2 = torch.stack([item['view2'] for item in batch])
+    r_peak = torch.stack([item['r_peak'] for item in batch])
     
-    result = {'view1': view1, 'view2': view2}
+    result = {'view1': view1, 'r_peak': r_peak}
     
     if 'metadata' in batch[0]:
         result['metadata'] = torch.stack([item['metadata'] for item in batch])
     
-    if 'temporal_view' in batch[0]:
-        result['temporal_view'] = torch.stack([item['temporal_view'] for item in batch])
+    if 'temporal_view1' in batch[0]:
+        result['temporal_view1'] = torch.stack([item['temporal_view1'] for item in batch])
         result['has_temporal'] = torch.tensor([item['has_temporal'] for item in batch])
     
     return result
@@ -282,6 +283,12 @@ def train_ssl(args):
     
     # 2.4 Resumption/Stability Logging
     
+    # ─── GPU Augmentation Setup ──────────────────────────────────────────
+    gpu_aug = None
+    if args.augmentation == 'physio':
+        print(f"  Enabling GPU-Accelerated Physio-Augmentations (strength={args.strength})")
+        gpu_aug = get_gpu_augmentations(strength=args.strength, device=device)
+        
     print(f"\nStarting Pretraining ({args.epochs} epochs)...")
     start_time_total = time.time()
     
@@ -310,20 +317,32 @@ def train_ssl(args):
         for batch_idx, batch in enumerate(pbar):
             if args.max_batches is not None and batch_idx >= args.max_batches:
                 break
-            # Async memory transfers
-            view1 = batch['view1'].to(device, non_blocking=True)
-            view2 = batch['view2'].to(device, non_blocking=True)
+            # Async memory transfers of RAW data
+            x_raw = batch['view1'].to(device, non_blocking=True)
+            r_peaks = batch['r_peak'].to(device, non_blocking=True)
             
+            # --- ON-DEVICE AUGMENTATION ---
+            # Instead of the CPU doing this one-by-one, the GPU does the whole batch in parallel!
+            if gpu_aug is not None:
+                view1 = gpu_aug.apply_batch(x_raw.clone())
+                view2 = gpu_aug.apply_batch(x_raw.clone())
+            else:
+                view1 = x_raw.clone()
+                view2 = x_raw.clone()
+                
             temporal_view = None
             has_temporal = None
-            metadata = None
+            if 'temporal_view1' in batch:
+                x_raw_temp = batch['temporal_view1'].to(device, non_blocking=True)
+                if gpu_aug is not None:
+                    temporal_view = gpu_aug.apply_batch(x_raw_temp)
+                else:
+                    temporal_view = x_raw_temp
+                has_temporal = batch['has_temporal'].to(device, non_blocking=True)
             
+            metadata = None
             if 'metadata' in batch and args.use_metadata:
                 metadata = batch['metadata'].to(device, non_blocking=True)
-                
-            if 'temporal_view' in batch:
-                temporal_view = batch['temporal_view'].to(device, non_blocking=True)
-                has_temporal = batch['has_temporal'].to(device, non_blocking=True)
             
             optimizer.zero_grad()
             

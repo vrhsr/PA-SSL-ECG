@@ -126,9 +126,10 @@ class ECGBeatDataset(Dataset):
         return len(self.X)
     
     def __getitem__(self, idx):
-        signal = torch.tensor(self.X[idx]).unsqueeze(0)  # (1, 250)
+        # We use .copy() to avoid potential array lock issues between workers
+        signal = torch.from_numpy(self.X[idx].copy()).unsqueeze(0)  # (1, 250)
         label = torch.tensor(self.labels[idx])
-        r_peak = self.r_peak_positions[idx]
+        r_peak = torch.tensor(self.r_peak_positions[idx])
         metadata = torch.tensor([self.age[idx], self.sex[idx], self.weight[idx], self.height[idx]])
         return signal, label, r_peak, idx, metadata
 
@@ -160,61 +161,35 @@ class SSLECGDataset(Dataset):
         return len(self.base)
     
     def __getitem__(self, idx):
-        signal = self.base.X[idx].copy()
-        r_peak = self.base.r_peak_positions[idx]
+        # In 'GPU Aug' mode, we just return the raw signal and r_peak.
+        # The training loop will handle the duplication and augmentation.
+        signal = torch.from_numpy(self.base.X[idx].copy()).unsqueeze(0)
+        r_peak = torch.tensor(self.base.r_peak_positions[idx])
         
-        # Generate two augmented views
-        if self.augment is not None:
-            view1 = self.augment(signal.copy(), r_peak)
-            view2 = self.augment(signal.copy(), r_peak)
-        else:
-            view1 = torch.tensor(signal).float()
-            view2 = torch.tensor(signal).float()
-        
-        # Ensure tensor format: (1, 250)
-        if isinstance(view1, np.ndarray):
-            view1 = torch.tensor(view1).float()
-        if isinstance(view2, np.ndarray):
-            view2 = torch.tensor(view2).float()
-        
-        if view1.dim() == 1:
-            view1 = view1.unsqueeze(0)
-        if view2.dim() == 1:
-            view2 = view2.unsqueeze(0)
-        
-        result = {'view1': view1, 'view2': view2, 'idx': idx}
+        result = {
+            'view1': signal,  # Raw
+            'r_peak': r_peak, # Needed for GPU-accel QRS protection
+            'idx': idx
+        }
         
         # Inject metadata
         if hasattr(self.base, 'age'):
-            metadata = torch.tensor([
+            result['metadata'] = torch.tensor([
                 self.base.age[idx], 
                 self.base.sex[idx], 
                 self.base.weight[idx], 
                 self.base.height[idx]
             ])
-            result['metadata'] = metadata
         
-        # Temporal positive
+        # Temporal positive (Raw)
         if self.use_temporal:
             neighbor_idx = self.base.get_temporal_neighbor(idx, scales=self.temporal_scales)
             if neighbor_idx is not None:
-                neighbor_signal = self.base.X[neighbor_idx].copy()
-                neighbor_rpeak = self.base.r_peak_positions[neighbor_idx]
-                if self.augment is not None:
-                    temporal_view = self.augment(neighbor_signal, neighbor_rpeak)
-                else:
-                    temporal_view = torch.tensor(neighbor_signal).float()
-                
-                if isinstance(temporal_view, np.ndarray):
-                    temporal_view = torch.tensor(temporal_view).float()
-                if temporal_view.dim() == 1:
-                    temporal_view = temporal_view.unsqueeze(0)
-                
-                result['temporal_view'] = temporal_view
+                neighbor_signal = torch.from_numpy(self.base.X[neighbor_idx].copy()).unsqueeze(0)
+                result['temporal_view1'] = neighbor_signal
                 result['has_temporal'] = True
             else:
-                # No neighbor — duplicate view1 as fallback
-                result['temporal_view'] = view1.clone()
+                result['temporal_view1'] = signal.clone()
                 result['has_temporal'] = False
         
         return result
