@@ -221,7 +221,7 @@ for config in "${CONFIGS[@]}"; do
             --loss_type "$loss" \
             --ssl_mode "$mode" \
             --epochs 100 \
-            --batch_size 1280 \
+            --batch_size 256 \
             --seed 42 \
             --num_workers 4 \
             --output_dir "$out_dir" \
