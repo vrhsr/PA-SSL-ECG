@@ -286,8 +286,8 @@ def train_ssl(args):
     # ─── GPU Augmentation Setup ──────────────────────────────────────────
     gpu_aug = None
     if args.augmentation == 'physio':
-        print(f"  Enabling GPU-Accelerated Physio-Augmentations (strength={args.strength})")
-        gpu_aug = get_gpu_augmentations(strength=args.strength, device=device)
+        print(f"  Enabling GPU-Accelerated Physio-Augmentations (strength={args.aug_strength})")
+        gpu_aug = get_gpu_augmentations(strength=args.aug_strength, device=device)
         
     print(f"\nStarting Pretraining ({args.epochs} epochs)...")
     start_time_total = time.time()
