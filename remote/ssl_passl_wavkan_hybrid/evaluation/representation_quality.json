@@ -1,0 +1,8 @@
+{
+  "embedding_std_mean": 0.7979182004928589,
+  "embedding_std_min": 0.357078492641449,
+  "is_collapsed": false,
+  "uniformity_l2": 350.6968703066266,
+  "silhouette": 0.04101714491844177,
+  "davies_bouldin": 4.629078389659524
+}

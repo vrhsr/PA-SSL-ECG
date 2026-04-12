@@ -1,0 +1,15 @@
+\begin{table}[ht]
+\centering
+\caption{Ablation study results}
+\label{tab:ablation}
+\begin{tabular}{lcccc}
+\toprule
+Method & ACCURACY & AUROC & F1 MACRO & ECE \\
+\midrule
+Supervised (Random Init) & 0.778 & 0.851 & 0.772 & 0.064 \\
+SimCLR + Naive Aug & 0.779 & 0.852 & 0.772 & 0.066 \\
+SimCLR + Physio (no temporal) & 0.780 & 0.854 & 0.773 & 0.044 \\
+Full PA-SSL & 0.778 & 0.851 & 0.771 & 0.064 \\
+\bottomrule
+\end{tabular}
+\end{table}
