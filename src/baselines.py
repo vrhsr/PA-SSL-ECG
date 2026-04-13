@@ -50,6 +50,7 @@ def evaluate_random_init(data_csv, device, encoder_type='resnet1d', n_seeds=3, m
     fractions = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
     
     for seed in range(n_seeds):
+        print(f"  [Random Init] Seed {seed+1}/{n_seeds} — extracting representations...")
         torch.manual_seed(seed)
         np.random.seed(seed)
         
@@ -60,6 +61,7 @@ def evaluate_random_init(data_csv, device, encoder_type='resnet1d', n_seeds=3, m
         
         dataset = ECGBeatDataset(data_csv)
         reprs, labels = extract_representations(encoder, dataset, device, max_batches=max_batches)
+        print(f"  [Random Init] Seed {seed+1}/{n_seeds} — running linear probes...")
         
         # Split
         n = len(labels)
@@ -125,6 +127,7 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
     n = len(dataset)
     
     for seed in range(n_seeds):
+        print(f"  [Supervised] Seed {seed+1}/{n_seeds}")
         torch.manual_seed(seed)
         np.random.seed(seed)
         
@@ -134,6 +137,7 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
         train_idx, test_idx = indices[:split], indices[split:]
         
         for frac in fractions:
+            print(f"    Label fraction: {int(frac*100)}%...", flush=True)
             torch.manual_seed(seed + int(frac * 1000))
             
             # Build fresh encoder
@@ -174,7 +178,9 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
             
             # Train
             model.train()
-            for ep in range(epochs):
+            pbar = tqdm(range(epochs), desc=f"      Supervised Seed{seed} frac={frac:.0%}", leave=False)
+            for ep in pbar:
+                ep_loss = 0.0
                 for batch_idx, (batch_x, batch_y) in enumerate(train_loader):
                     if max_batches is not None and batch_idx >= max_batches:
                         break
@@ -184,6 +190,8 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
                     loss = criterion(logits, batch_y)
                     loss.backward()
                     optimizer.step()
+                    ep_loss += loss.item()
+                pbar.set_postfix({'loss': f'{ep_loss:.4f}'})
             
             # Evaluate
             model.eval()
@@ -327,10 +335,12 @@ def train_and_evaluate_ts2vec(data_csv, device, epochs=50, batch_size=128, lr=1e
         loader = DataLoader(TensorDataset(X_train_pre), batch_size=batch_size, shuffle=True)
         
         encoder.train()
-        for ep in range(epochs):
+        pbar = tqdm(range(epochs), desc=f"  [TS2Vec] Seed {seed+1}/{n_seeds} pretraining")
+        for ep in pbar:
+            ep_loss = 0.0
             for batch_x in loader:
                 x = batch_x[0]
-                # Create two views using standard naive aug (since temporal overlap crop is hard on 250 len beats)
+                # Create two views using standard naive aug
                 x1 = torch.stack([torch.tensor(aug_pipe(s.numpy())) for s in x]).to(device)
                 x2 = torch.stack([torch.tensor(aug_pipe(s.numpy())) for s in x]).to(device)
                 
@@ -340,6 +350,8 @@ def train_and_evaluate_ts2vec(data_csv, device, epochs=50, batch_size=128, lr=1e
                 loss = criterion(z1, z2)
                 loss.backward()
                 optimizer.step()
+                ep_loss += loss.item()
+            pbar.set_postfix({'loss': f'{ep_loss:.4f}'})
         
         # Evaluation
         encoder.eval()
@@ -405,12 +417,13 @@ def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3,
         loader = DataLoader(TensorDataset(X_train_pre), batch_size=batch_size, shuffle=True)
         
         encoder.train()
-        for ep in range(epochs):
+        pbar = tqdm(range(epochs), desc=f"  [TFC] Seed {seed+1}/{n_seeds} pretraining")
+        for ep in pbar:
+            ep_loss = 0.0
             for batch_x in loader:
                 x = batch_x[0].to(device)
                 
-                # TFC uses time and frequency
-                # Apply standard augmentation to standard view
+                # TFC uses time and frequency views for consistency
                 x_aug = torch.stack([torch.tensor(aug_pipe(s.cpu().numpy())) for s in x]).to(device)
                 x_f = torch.fft.fft(x_aug).abs()
                 
@@ -421,6 +434,8 @@ def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3,
                 loss = criterion(z_t, z_f)
                 loss.backward()
                 optimizer.step()
+                ep_loss += loss.item()
+            pbar.set_postfix({'loss': f'{ep_loss:.4f}'})
         
         # Evaluation
         encoder.eval()
