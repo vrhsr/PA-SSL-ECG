@@ -359,7 +359,8 @@ def train_and_evaluate_ts2vec(data_csv, device, epochs=50, batch_size=128, lr=1e
             reprs = []
             loader_all = DataLoader(dataset, batch_size=batch_size, shuffle=False)
             labels = []
-            for b_x, b_y in loader_all:
+            for batch_tuple in loader_all:
+                b_x, b_y = batch_tuple[0], batch_tuple[1]
                 z = encoder.encode(b_x.to(device)).cpu()
                 reprs.append(z)
                 labels.append(b_y)
@@ -443,7 +444,8 @@ def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3,
             reprs = []
             loader_all = DataLoader(dataset, batch_size=batch_size, shuffle=False)
             labels = []
-            for b_x, b_y in loader_all:
+            for batch_tuple in loader_all:
+                b_x, b_y = batch_tuple[0], batch_tuple[1]
                 z = encoder.encode(b_x.to(device)).cpu()
                 reprs.append(z)
                 labels.append(b_y)
