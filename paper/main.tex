@@ -370,6 +370,13 @@ SimCLR (no temporal) & -- & -- & -- & -- & -- & -- & -- & -- \\
 \vspace{0.3em}
 \noindent PA-HybridSSL (ResNet1D) achieves \textbf{0.9876 AUROC} at only 1\% labels, surpassing the fully-supervised upper bound at 10\% labels (0.8835 AUROC). This 15.2\% absolute AUROC improvement over the Random Init baseline and 14.1\% improvement over Supervised training demonstrates the power of physiology-aware self-supervised pre-training.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\columnwidth]{figures/label_efficiency_chart.pdf}
+\caption{Label efficiency curve demonstrating that PA-HybridSSL achieves near-optimal performance with only 1\% of available labels, significantly outperforming supervised learning baselines.}
+\label{fig:label_eff}
+\end{figure}
+
 \subsection{Cross-Dataset Transfer}
 
 To assess generalization, we train representations on PTB-XL and evaluate (via linear probing) on MIT-BIH and Chapman-Shaoxing without any additional pre-training. \tabref{tab:transfer} shows the transfer matrix.
