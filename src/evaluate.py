@@ -360,7 +360,12 @@ def evaluate(args):
     
     # Rebuild encoder
     encoder = build_encoder(encoder_name, proj_dim=config.get('proj_dim', 128))
-    encoder.load_state_dict(checkpoint['encoder_state_dict'])
+    def strip_orig_mod(state_dict):
+        if not isinstance(state_dict, dict):
+            return state_dict
+        return {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+        
+    encoder.load_state_dict(strip_orig_mod(checkpoint['encoder_state_dict']), strict=False)
     encoder = encoder.to(device)
     encoder.eval()
     

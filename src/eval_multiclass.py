@@ -177,13 +177,18 @@ def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label):
     encoder = build_encoder(encoder_type, proj_dim=128)
     state = torch.load(ckpt_path, map_location=device)
 
+    def strip_orig_mod(state_dict):
+        if not isinstance(state_dict, dict):
+            return state_dict
+        return {k.replace('_orig_mod.', ''): v for k, v in state_dict.items()}
+
     # Handle different checkpoint formats
     if 'encoder_state_dict' in state:
-        encoder.load_state_dict(state['encoder_state_dict'])
+        encoder.load_state_dict(strip_orig_mod(state['encoder_state_dict']), strict=False)
     elif 'model_state_dict' in state:
-        encoder.load_state_dict(state['model_state_dict'])
+        encoder.load_state_dict(strip_orig_mod(state['model_state_dict']), strict=False)
     else:
-        encoder.load_state_dict(state)
+        encoder.load_state_dict(strip_orig_mod(state), strict=False)
 
     encoder = encoder.to(device)
 
