@@ -168,7 +168,7 @@ def run_linear_probe_multiclass(reprs, labels, patient_ids, seed=42):
     }
 
 
-def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label):
+def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label, batch_size=512):
     """Load a checkpoint, extract representations, run 5-class linear probe."""
     print(f"\n{'='*60}")
     print(f"Model: {label}")
@@ -195,7 +195,7 @@ def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label):
     labels_5class = df_5class['label_5class_idx'].values
     patient_ids   = df_5class['patient_id'].values
 
-    reprs = extract_features(encoder, df_5class, device)
+    reprs = extract_features(encoder, df_5class, device, batch_size=batch_size)
 
     results = []
     for seed in [42, 43, 44]:
@@ -234,6 +234,8 @@ def main():
     parser.add_argument('--checkpoints_dir', type=str, default='experiments',
                         help='Root dir containing ssl_*/best_checkpoint.pth')
     parser.add_argument('--output_dir', type=str, default='experiments/multiclass_results')
+    parser.add_argument('--batch_size', type=int, default=512,
+                        help='Batch size for feature extraction (default: 512)')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -261,7 +263,7 @@ def main():
         if not os.path.exists(ckpt):
             print(f"\nSkipping {display_name}: checkpoint not found at {ckpt}")
             continue
-        result = evaluate_checkpoint(ckpt, enc_type, df_5class, device, display_name)
+        result = evaluate_checkpoint(ckpt, enc_type, df_5class, device, display_name, batch_size=args.batch_size)
         all_results.append(result)
 
     # Step 3: Summary table
