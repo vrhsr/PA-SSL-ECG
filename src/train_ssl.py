@@ -83,8 +83,6 @@ def train_ssl(args):
     print(f"{'='*60}\n")
     
     # ─── Data ─────────────────────────────────────────────────────────────
-    base_dataset = ECGBeatDataset(args.data_file)
-    
     # Augmentation pipeline
     if args.augmentation == 'physio':
         aug_pipeline = PhysioAugPipeline.default(
@@ -104,6 +102,7 @@ def train_ssl(args):
         print("No augmentations (identity baseline)")
       
     from src.data.ecg_dataset import ECGBeatDataset, SSLECGDataset, patient_aware_split
+    import pandas as pd
     
     # ─── Defensive Pretraining Split ───
     # Guarantee that test patients are NEVER seen during pretraining.
