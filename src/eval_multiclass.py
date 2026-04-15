@@ -136,11 +136,9 @@ def run_linear_probe_multiclass(reprs, labels, patient_ids, seed=42):
     X_test,  y_test  = reprs[test_idx],  labels[test_idx]
 
     clf = LogisticRegression(
-        max_iter=2000, C=1.0, multi_class='multinomial',
+        max_iter=2000, C=1.0,
         solver='lbfgs', random_state=seed, n_jobs=-1
-        # Note: class_weight='balanced' hurts macro AUROC/F1 because
-        # it over-corrects for HYP (2.5%) at the cost of NORM/MI accuracy.
-        # AUROC (OvR macro) is already imbalance-robust. Report as limitation.
+        # multi_class removed: deprecated in sklearn 1.5, defaults to multinomial
     )
     clf.fit(X_train, y_train)
 
