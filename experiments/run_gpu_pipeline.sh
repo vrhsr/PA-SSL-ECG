@@ -215,6 +215,7 @@ for config in "${CONFIGS[@]}"; do
     else
         echo "  Training: $name (full)..."
         python3 -m src.train_ssl \
+            --data_file data/combined_pretrain.csv \
             --encoder "$enc" \
             --augmentation "$aug" \
             $temp \
