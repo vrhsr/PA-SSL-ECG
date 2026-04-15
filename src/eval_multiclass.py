@@ -137,8 +137,10 @@ def run_linear_probe_multiclass(reprs, labels, patient_ids, seed=42):
 
     clf = LogisticRegression(
         max_iter=2000, C=1.0, multi_class='multinomial',
-        solver='lbfgs', random_state=seed, n_jobs=-1,
-        class_weight='balanced'  # Critical: prevents HYP/CD class collapse (imbalanced dataset)
+        solver='lbfgs', random_state=seed, n_jobs=-1
+        # Note: class_weight='balanced' hurts macro AUROC/F1 because
+        # it over-corrects for HYP (2.5%) at the cost of NORM/MI accuracy.
+        # AUROC (OvR macro) is already imbalance-robust. Report as limitation.
     )
     clf.fit(X_train, y_train)
 
