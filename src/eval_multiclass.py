@@ -136,8 +136,9 @@ def run_linear_probe_multiclass(reprs, labels, patient_ids, seed=42):
     X_test,  y_test  = reprs[test_idx],  labels[test_idx]
 
     clf = LogisticRegression(
-        max_iter=1000, C=1.0, multi_class='multinomial',
-        solver='lbfgs', random_state=seed, n_jobs=-1
+        max_iter=2000, C=1.0, multi_class='multinomial',
+        solver='lbfgs', random_state=seed, n_jobs=-1,
+        class_weight='balanced'  # Critical: prevents HYP/CD class collapse (imbalanced dataset)
     )
     clf.fit(X_train, y_train)
 
