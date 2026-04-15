@@ -13,6 +13,11 @@ import argparse
 import sys
 from pathlib import Path
 
+# Important: We must use the exact same splitting function and seed used in evaluate.py
+# to guarantee the test set is completely held out from SSL pretraining.
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from src.data.ecg_dataset import patient_aware_split
+
 # Columns present in both datasets
 COMMON_COLS = [str(i) for i in range(250)] + [
     "label", "patient_id", "record_id", "beat_idx", "r_peak_pos", "age", "sex"
@@ -62,11 +67,26 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     total = 0
-    with open(out_path, "w") as fout:
-        print("Streaming PTB-XL...")
-        n = stream_csv(str(ptbxl_path), "ptbxl", fout, write_header=True)
-        print(f"  PTB-XL done: {n:,} rows")
-        total += n
+    with open(out_path, "w", newline='') as fout:
+        print("Safely extracting PTB-XL Train + Val (Holding out Test Set!)...")
+        # seed=42 matches evaluate.py exactly
+        train_df, val_df, _ = patient_aware_split(str(ptbxl_path), seed=42)
+        ptbxl_safe = pd.concat([train_df, val_df]).reset_index(drop=True)
+        
+        # Ensure only common columns
+        missing = [c for c in COMMON_COLS if c not in ptbxl_safe.columns]
+        if missing:
+            print(f"ERROR: PTB-XL missing columns: {missing}", file=sys.stderr)
+            sys.exit(1)
+            
+        ptbxl_safe = ptbxl_safe[COMMON_COLS].copy()
+        ptbxl_safe["source"] = "ptbxl"
+        
+        # Write PTB-XL safe portion
+        ptbxl_safe.to_csv(fout, header=True, index=False)
+        n_ptbxl = len(ptbxl_safe)
+        print(f"  PTB-XL safe beats written: {n_ptbxl:,} rows (Test set completely excluded)")
+        total += n_ptbxl
 
         print("Streaming CODE-15%...")
         n = stream_csv(str(code15_path), "code15", fout, write_header=False)
