@@ -224,9 +224,9 @@ class FoundationECGCorpus(Dataset):
 
         # Augmentation pipeline
         if augmentation == 'physio':
-            self.aug_pipeline = PhysioAugPipeline(
+            self.aug_pipeline = PhysioAugPipeline.default(
                 strength='medium',
-                qrs_avoidance_prob=0.8,
+                qrs_protect=True,
             )
         else:
             from src.augmentations.naive_augmentations import NaiveAugPipeline
