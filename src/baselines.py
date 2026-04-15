@@ -391,7 +391,7 @@ def train_and_evaluate_ts2vec(data_csv, device, epochs=50, batch_size=128, lr=1e
 # 5. TFC OFFICIAL BASELINE
 # ==============================================================================
 
-def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3, n_seeds=3):
+def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3, n_seeds=3, max_batches=None):
     from src.models.tfc import TFCEncoder, TFCLoss
     from src.augmentations.naive_augmentations import NaiveAugPipeline
     
@@ -421,7 +421,9 @@ def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3,
         pbar = tqdm(range(epochs), desc=f"  [TFC] Seed {seed+1}/{n_seeds} pretraining")
         for ep in pbar:
             ep_loss = 0.0
-            for batch_x in loader:
+            for batch_idx, batch_x in enumerate(loader):
+                if max_batches is not None and batch_idx >= max_batches:
+                    break
                 x = batch_x[0].to(device)
                 
                 # TFC uses time and frequency views for consistency
