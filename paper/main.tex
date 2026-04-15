@@ -278,27 +278,25 @@ Learned representations are evaluated via three protocols:
 
 \subsection{Datasets}
 
-We evaluate on three large-scale public ECG databases:
+We use three publicly available ECG datasets with strictly separated roles:
 
 \begin{table}[h]
 \centering
-\caption{Dataset characteristics. All signals are downsampled to 100\,Hz and segmented into 250-sample (2.5s) beat windows centered on R-peaks.}
+\caption{Dataset characteristics. Beats are 250-sample windows (2.5\,s at 100\,Hz) centered on R-peaks.}
 \label{tab:datasets}
 \begin{tabular}{lrrcl}
 \toprule
 \textbf{Dataset} & \textbf{Beats} & \textbf{Records} & \textbf{Origin} & \textbf{Role} \\
 \midrule
-CODE-15\% & 4,120,658 & 345,053 & Brazil & Pretraining \\
-PTB-XL & 189,499 & 21,837 & Germany & Pretrain + Eval \\
-MIT-BIH & 109,347 & 48 & USA & Eval. Transfer \\
-Georgia & 12,022 & 10,344 & USA/China & Eval. Transfer \\
+PTB-XL & 189,499 & 21,837 & Germany & SSL Pretraining + Evaluation \\
 \midrule
-\textbf{Total} & \textbf{4,431,526} & \textbf{377,282} & \textbf{3 continents} & \\
+MIT-BIH & 109,347 & 48 & USA & Transfer Eval (held-out) \\
+Chapman-Shaoxing & $\sim$90,000 & 10,646 & China & Transfer Eval (held-out) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-All datasets are downsampled to 100\,Hz and segmented into 250-sample (2.5s) beat windows centered on R-peaks detected by the Pan-Tompkins algorithm. Labels are binarized into Normal vs.\ Abnormal. CODE-15\% consists of 18 multi-part HDF5 files ($\sim$3.7\,GB each) processed via a streaming pipeline.
+\noindent\textbf{Pretraining}: PA-HybridSSL is pretrained exclusively on PTB-XL (189,499 beats). MIT-BIH and Chapman-Shaoxing are held out entirely and used only as zero-shot transfer evaluation targets, validating that the learned representations generalize to equipment, patient populations, and recording conditions never seen during pretraining.
 
 \subsection{Data Splitting}
 
