@@ -102,10 +102,22 @@ def train_ssl(args):
     else:
         aug_pipeline = None
         print("No augmentations (identity baseline)")
-      # Load primary SSL dataset
-    print(f"\nLoading SSL Dataset: {args.data_file}")
+      
+    from src.data.ecg_dataset import ECGBeatDataset, SSLECGDataset, patient_aware_split
+    
+    # ─── Defensive Pretraining Split ───
+    # Guarantee that test patients are NEVER seen during pretraining.
+    if "ptbxl" in args.data_file.lower() and "combined" not in args.data_file.lower():
+        print("  [Security] Detected raw PTB-XL pretraining. Splitting to hold out test patients...")
+        train_df, val_df, _ = patient_aware_split(args.data_file, seed=42)
+        safe_df = pd.concat([train_df, val_df]).reset_index(drop=True)
+        base_dataset = ECGBeatDataset(safe_df)
+    else:
+        # combined_pretrain.csv already has test patients cleanly excluded
+        base_dataset = ECGBeatDataset(args.data_file)
+        
     full_dataset = SSLECGDataset(
-        base_dataset,
+        base_dataset, 
         augmentation_pipeline=aug_pipeline,
         use_temporal_positives=args.use_temporal,
         temporal_scales=args.temporal_scales

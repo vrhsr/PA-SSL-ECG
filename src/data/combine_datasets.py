@@ -1,36 +1,32 @@
 #!/usr/bin/env python3
 """
 combine_datasets.py
-Merges PTB-XL and CODE-15% preprocessed CSVs into a single pretraining corpus.
-Uses chunked I/O to avoid loading 11GB+ into RAM simultaneously.
+Merges PTB-XL (train+val only) and CODE-15% into a single pretraining corpus.
+PTB-XL test patients are excluded using the same patient_aware_split(seed=42)
+that evaluate.py uses — guaranteeing zero transductive leakage.
 
 Output: data/combined_pretrain.csv
-Columns: 0..249 (signal), label, patient_id, record_id, beat_idx, r_peak_pos, age, sex, source
 """
 
 import pandas as pd
-import argparse
 import sys
 from pathlib import Path
 
-# Important: We must use the exact same splitting function and seed used in evaluate.py
-# to guarantee the test set is completely held out from SSL pretraining.
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.data.ecg_dataset import patient_aware_split
 
-# Columns present in both datasets
 COMMON_COLS = [str(i) for i in range(250)] + [
     "label", "patient_id", "record_id", "beat_idx", "r_peak_pos", "age", "sex"
 ]
-
-CHUNK_SIZE = 50_000  # rows per chunk
+CHUNK_SIZE = 50_000
 
 
 def stream_csv(path: str, source_tag: str, output_handle, write_header: bool) -> int:
-    """Stream a CSV in chunks, selecting COMMON_COLS, tagging source, writing to output."""
     rows_written = 0
     for i, chunk in enumerate(pd.read_csv(path, chunksize=CHUNK_SIZE, low_memory=False)):
-        # Keep only common columns
         missing = [c for c in COMMON_COLS if c not in chunk.columns]
         if missing:
             print(f"ERROR: {path} missing columns: {missing}", file=sys.stderr)
@@ -45,65 +41,52 @@ def stream_csv(path: str, source_tag: str, output_handle, write_header: bool) ->
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ptbxl",    default="data/ptbxl_processed.csv")
-    parser.add_argument("--code15",   default="data/code15_processed.csv")
-    parser.add_argument("--output",   default="data/combined_pretrain.csv")
-    parser.add_argument("--shuffle",  action="store_true",
-                        help="Shuffle final output (loads everything into RAM — skip if low memory)")
-    args = parser.parse_args()
-
-    project_root = Path(__file__).resolve().parents[2]
-    ptbxl_path  = project_root / args.ptbxl
-    code15_path = project_root / args.code15
-    out_path    = project_root / args.output
+    ptbxl_path  = PROJECT_ROOT / "data" / "ptbxl_processed.csv"
+    code15_path = PROJECT_ROOT / "data" / "code15_processed.csv"
+    out_path    = PROJECT_ROOT / "data" / "combined_pretrain.csv"
 
     for p in [ptbxl_path, code15_path]:
         if not p.exists():
             print(f"ERROR: not found: {p}", file=sys.stderr)
             sys.exit(1)
 
-    print(f"Output: {out_path}")
+    # --- PTB-XL: exclude test patients (seed=42 matches evaluate.py exactly) ---
+    print("Splitting PTB-XL with patient_aware_split(seed=42)...")
+    train_df, val_df, test_df = patient_aware_split(str(ptbxl_path), seed=42)
+
+    test_patients = set(test_df['patient_id'].unique())
+    print(f"  Excluded {len(test_patients):,} test patients "
+          f"({len(test_df):,} beats) from pretraining corpus.")
+
+    ptbxl_safe = pd.concat([train_df, val_df], ignore_index=True)
+    ptbxl_safe = ptbxl_safe[COMMON_COLS].copy()
+    ptbxl_safe["source"] = "ptbxl"
+    print(f"  PTB-XL train+val: {len(ptbxl_safe):,} beats, "
+          f"{ptbxl_safe['patient_id'].nunique():,} patients")
+
+    # Sanity check: no test patient leakage
+    pretrain_patients = set(ptbxl_safe['patient_id'].unique())
+    overlap = pretrain_patients & test_patients
+    assert len(overlap) == 0, f"FATAL: {len(overlap)} test patients in pretraining corpus!"
+    print("  ✓ Zero test patient leakage confirmed.")
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
     total = 0
-    with open(out_path, "w", newline='') as fout:
-        print("Safely extracting PTB-XL Train + Val (Holding out Test Set!)...")
-        # seed=42 matches evaluate.py exactly
-        train_df, val_df, _ = patient_aware_split(str(ptbxl_path), seed=42)
-        ptbxl_safe = pd.concat([train_df, val_df]).reset_index(drop=True)
-        
-        # Ensure only common columns
-        missing = [c for c in COMMON_COLS if c not in ptbxl_safe.columns]
-        if missing:
-            print(f"ERROR: PTB-XL missing columns: {missing}", file=sys.stderr)
-            sys.exit(1)
-            
-        ptbxl_safe = ptbxl_safe[COMMON_COLS].copy()
-        ptbxl_safe["source"] = "ptbxl"
-        
-        # Write PTB-XL safe portion
-        ptbxl_safe.to_csv(fout, header=True, index=False)
-        n_ptbxl = len(ptbxl_safe)
-        print(f"  PTB-XL safe beats written: {n_ptbxl:,} rows (Test set completely excluded)")
-        total += n_ptbxl
 
+    with open(out_path, "w") as fout:
+        # Write PTB-XL safe subset (already in memory, small enough)
+        ptbxl_safe.to_csv(fout, header=True, index=False)
+        total += len(ptbxl_safe)
+        print(f"  PTB-XL written: {total:,} rows")
+
+        # Stream CODE-15% in chunks
         print("Streaming CODE-15%...")
         n = stream_csv(str(code15_path), "code15", fout, write_header=False)
-        print(f"  CODE-15% done: {n:,} rows")
         total += n
+        print(f"  CODE-15% done: {n:,} rows")
 
     print(f"\nCombined corpus: {total:,} rows → {out_path}")
-
-    if args.shuffle:
-        print("Shuffling (loading into RAM)...")
-        df = pd.read_csv(out_path, low_memory=False)
-        df = df.sample(frac=1, random_state=42).reset_index(drop=True)
-        df.to_csv(out_path, index=False)
-        print("Shuffle complete.")
-    else:
-        print("Note: output is PTB-XL rows first, then CODE-15%. Pass --shuffle to randomize.")
-        print("For SSL pretraining, DataLoader shuffle=True handles this — --shuffle not required.")
+    print("Note: DataLoader shuffle=True handles ordering. --shuffle not required.")
 
 
 if __name__ == "__main__":
