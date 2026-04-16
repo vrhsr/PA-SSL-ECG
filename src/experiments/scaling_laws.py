@@ -319,6 +319,7 @@ def run_scaling_experiment(
                 augmentation='physio',
                 seed=seed,
                 skip_missing=True,
+                target_length=250,
             )
 
             if len(corpus) == 0:
