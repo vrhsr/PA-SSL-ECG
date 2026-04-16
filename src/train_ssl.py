@@ -414,13 +414,29 @@ def train_ssl(args):
             if args.amp:
                 with autocast('cuda'):
                     loss, loss_aug, loss_temp, loss_mae = compute_batch_loss()
+                
+                # Robust NaN protection for Foundation-Scale Pretraining
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"  [WARN] Skipping batch with NaN/Inf loss (epoch {epoch + 1}, batch {batch_idx})")
+                    continue
+                    
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer) # Unscale before clipping
+                torch.nn.utils.clip_grad_norm_(model_params, max_norm=5.0) # Explicit gradient clipping
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss, loss_aug, loss_temp, loss_mae = compute_batch_loss()
+                
+                # Robust NaN protection for Foundation-Scale Pretraining
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"  [WARN] Skipping batch with NaN/Inf loss (epoch {epoch + 1}, batch {batch_idx})")
+                    continue
+                    
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model_params, max_norm=5.0) # Explicit gradient clipping
                 optimizer.step()
+                
             # Log batch for stability curves (every 10 batches to save memory)
             if batch_idx % 10 == 0:
                 batch_history.append({
