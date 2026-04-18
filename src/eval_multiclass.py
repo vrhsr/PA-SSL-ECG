@@ -201,6 +201,17 @@ def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label, batch
 
     reprs = extract_features(encoder, df_5class, device, batch_size=batch_size)
 
+    # ── Filter NaN/Inf Representations ────────────────────────────────────────
+    # Sometimes messy input or exploding gradients produce non-finite values.
+    # We must drop them to avoid LogisticRegression crash.
+    mask = np.isfinite(reprs).all(axis=1)
+    if not mask.all():
+        n_dropped = len(reprs) - mask.sum()
+        print(f"  Warning: Dropped {n_dropped} samples with NaN/Inf representations.")
+        reprs = reprs[mask]
+        labels_5class = labels_5class[mask]
+        patient_ids = patient_ids[mask]
+
     results = []
     for seed in [42, 43, 44]:
         m = run_linear_probe_multiclass(reprs, labels_5class, patient_ids, seed=seed)

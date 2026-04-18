@@ -5,6 +5,10 @@
 #   --loss_type : ntxent | vicreg | barlow   (the contrastive objective)
 #   --mask_ratio: 0.0-1.0 float  (NOT "80_20" format)
 #   --no_qrs_protect: flag to disable QRS protection
+#
+# EVALUATION NOTE: --n_seeds N does NOT retrain the encoder.
+#   It re-samples the linear probe split N times with different random seeds
+#   to estimate variance on a FROZEN checkpoint. This is correct practice.
 
 set -e  # stop on first error
 set -o pipefail # ensure exit codes propagate through pipes
@@ -14,6 +18,7 @@ DATA="${1:-data/ptbxl_processed.csv}"
 EPOCHS="${2:-100}"
 BS=256
 LR=3e-4
+BASELINE_BS=256    # Keep identical to SSL batch size for fair comparison
 SEEDS=(42 123 456)
 
 if [ ! -f "$DATA" ]; then
@@ -23,7 +28,8 @@ if [ ! -f "$DATA" ]; then
 fi
 
 mkdir -p logs experiments/ablation experiments/qrs_ablation \
-          experiments/masking_sweep experiments/baselines results
+          experiments/masking_sweep experiments/baselines \
+          experiments/loo_ablation results
 
 echo "=================================================="
 echo " PA-SSL Full Ablation"
@@ -261,7 +267,7 @@ if [ ! -f "${OUT}/done.flag" ]; then
     echo "  🚀  $NAME  [True end-to-end supervised training Baseline]"
     mkdir -p "$OUT"
     python3 -c "import torch; from src.baselines import train_supervised; \
-res = train_supervised('$DATA', torch.device('cuda' if torch.cuda.is_available() else 'cpu'), epochs=$EPOCHS, batch_size=64); \
+res = train_supervised('$DATA', torch.device('cuda' if torch.cuda.is_available() else 'cpu'), epochs=$EPOCHS, batch_size=$BASELINE_BS); \
 res.to_csv('$OUT/supervised_results.csv', index=False)" \
         2>&1 | tee "logs/bl_${NAME}.log"
     touch "${OUT}/done.flag"
@@ -284,6 +290,8 @@ python3 -m src.experiments.computational_cost \
 echo ""
 echo "━━━ BLOCK 6: Leave-One-Out (LOO) Augmentation Ablation (8 runs) ━━━"
 echo "Isolating the contribution of each physiological augmentation."
+echo "Note: LOO ablations use a single seed (seed=42) due to computational constraints."
+echo "      This will be explicitly stated in the paper."
 
 AUGS=("constrained_time_warp" "amplitude_perturbation" "baseline_wander" "emg_noise_injection" "heart_rate_resample" "powerline_interference" "segment_dropout" "wavelet_masking")
 
@@ -316,11 +324,12 @@ for AUG in "${AUGS[@]}"; do
         --num_workers    4 \
         2>&1 | tee "logs/loo_${NAME}.log"
 
-    echo "  📊  Evaluating $NAME..."
+    # LOO evaluation: single seed (fixed checkpoint, no retraining)
+    echo "  📊  Evaluating $NAME (1 probe seed for LOO speed)..."
     python3 -m src.evaluate \
         --checkpoint "$OUT/best_checkpoint.pth" \
         --data_file "$DATA" \
-        --n_seeds 3 \
+        --n_seeds 1 \
         2>&1 | tee "logs/eval_loo_${NAME}.log"
 
     touch "${OUT}/done.flag"
@@ -330,9 +339,58 @@ done
 echo ""
 echo "BLOCK 6 complete: $(date)"
 
+# ═══════════════════════════════════════════════════════════
+# FINAL: Aggregate all evaluation CSVs into one master table
+# ═══════════════════════════════════════════════════════════
+echo ""
+echo "━━━ AGGREGATING ALL RESULTS → results/all_ablation_results.csv ━━━"
+
+python3 - <<'PYEOF'
+import os
+import glob
+import pandas as pd
+from datetime import datetime
+
+all_dfs = []
+
+# Walk every experiment sub-dir and collect label_efficiency CSVs
+for csv_path in glob.glob("experiments/**/evaluation/label_efficiency.csv", recursive=True):
+    try:
+        df = pd.read_csv(csv_path)
+        # Tag with the parent experiment folder name
+        exp_name = csv_path.split(os.sep)[1]  # e.g. 'ablation', 'masking_sweep'
+        sub_name = csv_path.split(os.sep)[2]  # e.g. 'resnet1d_hybrid_s42'
+        df.insert(0, 'experiment', sub_name)
+        df.insert(0, 'block', exp_name)
+        all_dfs.append(df)
+    except Exception as e:
+        print(f"  Warning: could not load {csv_path}: {e}")
+
+# Also pick up baselines CSVs
+for csv_path in glob.glob("experiments/baselines/*_results.csv"):
+    try:
+        df = pd.read_csv(csv_path)
+        df.insert(0, 'experiment', os.path.basename(csv_path).replace('_results.csv',''))
+        df.insert(0, 'block', 'baselines')
+        all_dfs.append(df)
+    except Exception as e:
+        print(f"  Warning: could not load {csv_path}: {e}")
+
+if all_dfs:
+    combined = pd.concat(all_dfs, ignore_index=True)
+    combined['aggregated_at'] = datetime.now().isoformat()
+    os.makedirs('results', exist_ok=True)
+    out = 'results/all_ablation_results.csv'
+    combined.to_csv(out, index=False)
+    print(f"  ✅  Aggregated {len(combined)} rows from {len(all_dfs)} files → {out}")
+else:
+    print("  ⚠️  No evaluation CSVs found yet — run evaluations first.")
+PYEOF
+
 echo ""
 echo "=================================================="
 echo " ALL DONE: $(date)"
 echo " Completed runs:"
 find experiments -name "done.flag" | wc -l
+echo " Master results: results/all_ablation_results.csv"
 echo "=================================================="
