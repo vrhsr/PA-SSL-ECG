@@ -208,6 +208,15 @@ def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label, batch
     if not mask.all():
         n_dropped = len(reprs) - mask.sum()
         print(f"  Warning: Dropped {n_dropped} samples with NaN/Inf representations.")
+        if mask.sum() == 0:
+            print(f"  ERROR: All samples dropped! Weights are likely corrupted with NaNs.")
+            return {
+                'model': label,
+                'mean_accuracy': float('nan'), 'std_accuracy': 0.0,
+                'mean_f1_macro': float('nan'),  'std_f1_macro': 0.0,
+                'mean_auroc':    float('nan'), 'std_auroc': 0.0,
+                'mean_auprc':    float('nan'), 'std_auprc': 0.0,
+            }
         reprs = reprs[mask]
         labels_5class = labels_5class[mask]
         patient_ids = patient_ids[mask]
