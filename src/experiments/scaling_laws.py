@@ -400,15 +400,28 @@ def _plot_scaling_law(results: list, output_dir: Path) -> None:
         ax.set_xlabel('Pretraining corpus size (records)', fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12)
         ax.grid(True, alpha=0.3)
+
+        # ── Force ALL 5 tick labels explicitly (prevents matplotlib from hiding 50K/500K) ──
+        ax.set_xticks(ns)
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(
             lambda x, _: f'{x/1e6:.0f}M' if x >= 1e6 else
-                          f'{x/1e3:.0f}K' if x >= 1e3 else str(int(x))
+                          f'{int(x/1e3)}K' if x >= 1e3 else str(int(x))
         ))
+        ax.xaxis.set_minor_formatter(ticker.NullFormatter())
+        ax.tick_params(axis='x', which='minor', length=0)
+        # Rotate labels slightly so they never overlap
+        ax.tick_params(axis='x', rotation=30)
 
-        # Annotate each point
-        for n, v in zip(ns, values):
+        # ── Annotate each point (alternate above/below to prevent overlap) ──
+        for i, (n, v) in enumerate(zip(ns, values)):
+            # If next point is lower → going down → put label above current
+            if i < len(values) - 1 and values[i + 1] < v:
+                xytext = (0, 10)
+            else:
+                xytext = (0, -14)
             ax.annotate(f'{v:.3f}', (n, v), textcoords='offset points',
-                        xytext=(5, 5), fontsize=9)
+                        xytext=xytext, fontsize=9, ha='center',
+                        fontweight='bold', color=color)
 
         # Reference line: current paper baseline (50K)
         ax.axvline(x=50_000, color='gray', linestyle='--', alpha=0.6,
