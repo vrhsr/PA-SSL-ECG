@@ -224,6 +224,14 @@ def train_ssl(args):
     config = vars(args)
     config['n_params'] = n_params
     config['n_samples'] = len(dataset) # Use 'dataset' which might be a Subset
+    
+    # Try to add git commit for reproducibility
+    try:
+        import subprocess
+        config['git_commit'] = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+    except Exception:
+        config['git_commit'] = 'unknown'
+
     with open(os.path.join(exp_dir, 'config.json'), 'w') as f:
         json.dump(config, f, indent=2)
     

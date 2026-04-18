@@ -149,11 +149,13 @@ def run_linear_probe_multiclass(reprs, labels, patient_ids, seed=42):
     f1_macro = f1_score(y_test, y_pred, average='macro', zero_division=0)
     f1_weighted = f1_score(y_test, y_pred, average='weighted', zero_division=0)
 
-    # One-vs-Rest AUROC (macro)
+    # One-vs-Rest AUROC (macro) and AUPRC
     try:
         auroc = roc_auc_score(y_test, y_prob, multi_class='ovr', average='macro')
+        auprc = average_precision_score(pd.get_dummies(y_test), y_prob, average='macro')
     except Exception:
         auroc = float('nan')
+        auprc = float('nan')
 
     # Per-class report
     report = classification_report(y_test, y_pred, target_names=CLASS_NAMES, zero_division=0)
@@ -163,6 +165,7 @@ def run_linear_probe_multiclass(reprs, labels, patient_ids, seed=42):
         'f1_macro':     f1_macro,
         'f1_weighted':  f1_weighted,
         'auroc_macro':  auroc,
+        'auprc_macro':  auprc,
         'n_train':      len(train_idx),
         'n_test':       len(test_idx),
         'report':       report,
@@ -207,14 +210,17 @@ def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label, batch
     mean_acc   = np.mean([r['accuracy']    for r in results])
     mean_f1    = np.mean([r['f1_macro']    for r in results])
     mean_auroc = np.mean([r['auroc_macro'] for r in results])
+    mean_auprc = np.mean([r['auprc_macro'] for r in results])
     std_acc    = np.std([r['accuracy']     for r in results])
     std_f1     = np.std([r['f1_macro']     for r in results])
     std_auroc  = np.std([r['auroc_macro']  for r in results])
+    std_auprc  = np.std([r['auprc_macro']  for r in results])
 
     print(f"\n  MEAN RESULTS (3 seeds):")
     print(f"    Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
     print(f"    F1 Macro: {mean_f1:.4f} ± {std_f1:.4f}")
     print(f"    AUROC:    {mean_auroc:.4f} ± {std_auroc:.4f}")
+    print(f"    AUPRC:    {mean_auprc:.4f} ± {std_auprc:.4f}")
     print(f"\n  Per-class report (seed=42):")
     print(results[0]['report'])
 
@@ -223,6 +229,7 @@ def evaluate_checkpoint(ckpt_path, encoder_type, df_5class, device, label, batch
         'mean_accuracy': mean_acc, 'std_accuracy': std_acc,
         'mean_f1_macro': mean_f1,  'std_f1_macro': std_f1,
         'mean_auroc':    mean_auroc, 'std_auroc': std_auroc,
+        'mean_auprc':    mean_auprc, 'std_auprc': std_auprc,
     }
 
 
@@ -279,7 +286,8 @@ def main():
         print(f"  {row['model']:<45} "
               f"Acc={row['mean_accuracy']:.4f}±{row['std_accuracy']:.4f}  "
               f"F1={row['mean_f1_macro']:.4f}±{row['std_f1_macro']:.4f}  "
-              f"AUROC={row['mean_auroc']:.4f}±{row['std_auroc']:.4f}")
+              f"AUROC={row['mean_auroc']:.4f}±{row['std_auroc']:.4f}  "
+              f"AUPRC={row['mean_auprc']:.4f}±{row['std_auprc']:.4f}")
 
     print(f"\nResults saved to: {out_csv}")
 
@@ -291,14 +299,15 @@ def main():
         f.write("\\caption{5-class PTB-XL superclass evaluation (linear probe, mean $\\pm$ std over 3 seeds).}\n")
         f.write("\\label{tab:multiclass}\n")
         f.write("\\begin{tabular}{lccc}\n\\toprule\n")
-        f.write("\\textbf{Method} & \\textbf{Accuracy} & \\textbf{F1 Macro} & \\textbf{AUROC} \\\\\n")
+        f.write("\\textbf{Method} & \\textbf{Accuracy} & \\textbf{F1 Macro} & \\textbf{AUROC} & \\textbf{AUPRC} \\\\\n")
         f.write("\\midrule\n")
         for _, row in df_results.iterrows():
             name = row['model'].replace('&', '\\&')
             f.write(f"{name} & "
                     f"{row['mean_accuracy']:.4f}$\\pm${row['std_accuracy']:.4f} & "
                     f"{row['mean_f1_macro']:.4f}$\\pm${row['std_f1_macro']:.4f} & "
-                    f"{row['mean_auroc']:.4f}$\\pm${row['std_auroc']:.4f} \\\\\n")
+                    f"{row['mean_auroc']:.4f}$\\pm${row['std_auroc']:.4f} & "
+                    f"{row['mean_auprc']:.4f}$\\pm${row['std_auprc']:.4f} \\\\\n")
         f.write("\\bottomrule\n\\end{tabular}\n\\end{table}\n")
 
     print(f"LaTeX table saved to: {latex_path}")

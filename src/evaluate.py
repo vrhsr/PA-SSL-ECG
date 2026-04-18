@@ -423,6 +423,7 @@ def evaluate(args):
     summary = le_results.groupby('label_fraction').agg({
         'linear_accuracy': ['mean', 'std'],
         'linear_auroc': ['mean', 'std'],
+        'linear_auprc': ['mean', 'std'],
         'linear_ece': ['mean', 'std'],
     }).round(4)
     print(summary.to_string())

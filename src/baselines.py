@@ -120,21 +120,31 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
     Returns:
         DataFrame with per-seed results at multiple label fractions
     """
+    from src.data.ecg_dataset import patient_aware_split
     results = []
     fractions = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
     
-    dataset = ECGBeatDataset(data_csv)
-    n = len(dataset)
+    # Use rigorous patient-aware split
+    train_df, val_df, test_df = patient_aware_split(data_csv, seed=42)
+    trainval_df = pd.concat([train_df, val_df]).reset_index(drop=True)
+    
+    # We must load datasets from these splits
+    dataset_trainval = ECGBeatDataset(trainval_df)
+    dataset_test = ECGBeatDataset(test_df)
+    
+    n_trainval = len(dataset_trainval)
+    
+    # Extract complete test set
+    signals_test = [dataset_test[i][0] for i in range(len(dataset_test))]
+    labels_test = [dataset_test[i][1] for i in range(len(dataset_test))]
     
     for seed in range(n_seeds):
         print(f"  [Supervised] Seed {seed+1}/{n_seeds}")
         torch.manual_seed(seed)
         np.random.seed(seed)
         
-        # Split indices
-        indices = np.random.permutation(n)
-        split = int(0.8 * n)
-        train_idx, test_idx = indices[:split], indices[split:]
+        # Subsample from trainval
+        indices = np.random.permutation(n_trainval)
         
         for frac in fractions:
             print(f"    Label fraction: {int(frac*100)}%...", flush=True)
@@ -147,24 +157,16 @@ def train_supervised(data_csv, device, encoder_type='resnet1d',
             optimizer = optim.Adam(model.parameters(), lr=lr)
             criterion = nn.CrossEntropyLoss()
             
-            # Subsample training data
-            n_train = max(10, int(frac * len(train_idx)))
-            train_sub_idx = train_idx[:n_train]
+            n_train = max(10, int(frac * len(indices)))
+            train_sub_idx = indices[:n_train]
             
-            # Load data
+            # Load supervised training data
             signals_train = []
             labels_train = []
             for i in train_sub_idx:
-                sample = dataset[i]
+                sample = dataset_trainval[i]
                 signals_train.append(sample[0])
                 labels_train.append(sample[1])
-            
-            signals_test = []
-            labels_test = []
-            for i in test_idx:
-                sample = dataset[i]
-                signals_test.append(sample[0])
-                labels_test.append(sample[1])
             
             X_train = torch.stack(signals_train)
             y_train = torch.tensor(labels_train, dtype=torch.long)
@@ -312,26 +314,31 @@ def train_and_evaluate_ts2vec(data_csv, device, epochs=50, batch_size=128, lr=1e
     from src.models.ts2vec import TS2VecEncoder, HierarchicalContrastiveLoss
     from src.augmentations.naive_augmentations import NaiveAugPipeline
     
+    from src.data.ecg_dataset import patient_aware_split
     results = []
     fractions = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-    dataset = ECGBeatDataset(data_csv)
-    n = len(dataset)
+    
+    # Use rigorous patient-aware split
+    train_df, val_df, test_df = patient_aware_split(data_csv, seed=42)
+    trainval_df = pd.concat([train_df, val_df]).reset_index(drop=True)
+    
+    dataset_trainval = ECGBeatDataset(trainval_df)
+    dataset_test = ECGBeatDataset(test_df)
     aug_pipe = NaiveAugPipeline(p=1.0)
     
     for seed in range(n_seeds):
         torch.manual_seed(seed)
         np.random.seed(seed)
         
-        indices = np.random.permutation(n)
-        split = int(0.8 * n)
-        train_idx, test_idx = indices[:split], indices[split:]
+        # Subsample indices for label efficiency tests
+        indices_trainval = np.random.permutation(len(dataset_trainval))
         
-        # TS2Vec Pretraining
+        # TS2Vec Pretraining on Train+Val only
         encoder = TS2VecEncoder(input_dims=1, output_dims=320, hidden_dims=64, depth=10).to(device)
         criterion = HierarchicalContrastiveLoss(alpha=0.5, temp=0.1)
         optimizer = optim.Adam(encoder.parameters(), lr=lr)
         
-        X_train_pre = torch.stack([dataset[i][0] for i in train_idx])
+        X_train_pre = torch.stack([dataset_trainval[i][0] for i in range(len(dataset_trainval))])
         loader = DataLoader(TensorDataset(X_train_pre), batch_size=batch_size, shuffle=True)
         
         encoder.train()
@@ -394,27 +401,30 @@ def train_and_evaluate_ts2vec(data_csv, device, epochs=50, batch_size=128, lr=1e
 def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3, n_seeds=3, max_batches=None):
     from src.models.tfc import TFCEncoder, TFCLoss
     from src.augmentations.naive_augmentations import NaiveAugPipeline
+    from src.data.ecg_dataset import patient_aware_split
     
     results = []
     fractions = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-    dataset = ECGBeatDataset(data_csv)
-    n = len(dataset)
+    
+    train_df, val_df, test_df = patient_aware_split(data_csv, seed=42)
+    trainval_df = pd.concat([train_df, val_df]).reset_index(drop=True)
+    
+    dataset_trainval = ECGBeatDataset(trainval_df)
+    dataset_test = ECGBeatDataset(test_df)
     aug_pipe = NaiveAugPipeline(p=1.0)
     
     for seed in range(n_seeds):
         torch.manual_seed(seed)
         np.random.seed(seed)
         
-        indices = np.random.permutation(n)
-        split = int(0.8 * n)
-        train_idx, test_idx = indices[:split], indices[split:]
+        indices_trainval = np.random.permutation(len(dataset_trainval))
         
         # TFC Pretraining
         encoder = TFCEncoder(in_channels=1, hidden_dim=64, proj_dim=128).to(device)
         criterion = TFCLoss(temperature=0.2)
         optimizer = optim.Adam(encoder.parameters(), lr=lr)
         
-        X_train_pre = torch.stack([dataset[i][0] for i in train_idx])
+        X_train_pre = torch.stack([dataset_trainval[i][0] for i in range(len(dataset_trainval))])
         loader = DataLoader(TensorDataset(X_train_pre), batch_size=batch_size, shuffle=True)
         
         encoder.train()
@@ -443,31 +453,43 @@ def train_and_evaluate_tfc(data_csv, device, epochs=50, batch_size=128, lr=1e-3,
         # Evaluation
         encoder.eval()
         with torch.no_grad():
-            reprs = []
-            loader_all = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-            labels = []
-            for batch_tuple in loader_all:
+            reprs_trainval = []
+            labels_trainval = []
+            loader_trainval = DataLoader(dataset_trainval, batch_size=batch_size, shuffle=False)
+            for batch_tuple in loader_trainval:
                 b_x, b_y = batch_tuple[0], batch_tuple[1]
-                z = encoder.encode(b_x.to(device)).cpu()
-                reprs.append(z)
-                labels.append(b_y)
-            reprs = torch.cat(reprs).numpy()
-            labels = torch.cat(labels).numpy()
+                z_t, _ = encoder(b_x.to(device))
+                reprs_trainval.append(z_t.cpu())
+                labels_trainval.append(b_y)
+            reprs_trainval = torch.cat(reprs_trainval).numpy()
+            labels_trainval = torch.cat(labels_trainval).numpy()
+            
+            reprs_test = []
+            labels_test = []
+            loader_test = DataLoader(dataset_test, batch_size=batch_size, shuffle=False)
+            for batch_tuple in loader_test:
+                b_x, b_y = batch_tuple[0], batch_tuple[1]
+                z_t, _ = encoder(b_x.to(device))
+                reprs_test.append(z_t.cpu())
+                labels_test.append(b_y)
+            reprs_test = torch.cat(reprs_test).numpy()
+            labels_test = torch.cat(labels_test).numpy()
             
         for frac in fractions:
-            n_train = max(10, int(frac * len(train_idx)))
-            train_sub = train_idx[:n_train]
+            n_labeled = max(10, int(frac * len(indices_trainval)))
+            sub_idx = indices_trainval[:n_labeled]
             
+            from src.evaluate import linear_probe
             metrics = linear_probe(
-                reprs[train_sub], labels[train_sub],
-                reprs[test_idx], labels[test_idx]
+                reprs_trainval[sub_idx], labels_trainval[sub_idx],
+                reprs_test, labels_test
             )
             
             result = {
                 'method': 'TFC (Official)',
                 'label_fraction': frac,
                 'seed': seed,
-                'n_labeled': n_train,
+                'n_labeled': n_labeled,
                 **{f'linear_{k}': v for k, v in metrics.items()},
             }
             results.append(result)

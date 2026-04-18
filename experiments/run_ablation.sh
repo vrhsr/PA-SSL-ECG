@@ -58,12 +58,19 @@ for MODE in contrastive mae hybrid; do
     echo "  🚀  $NAME  [encoder=$ENC  ssl_mode=$MODE  seed=$SEED]"
     mkdir -p "$OUT"
 
+    # Only pass loss_type if not pure MAE
+    if [ "$MODE" = "mae" ]; then
+        LOSS_ARG=""
+    else
+        LOSS_ARG="--loss_type ntxent"
+    fi
+
     python3 -m src.train_ssl \
         --encoder        "$ENC" \
         --ssl_mode       "$MODE" \
         --augmentation   physio \
         --use_temporal \
-        --loss_type      ntxent \
+        $LOSS_ARG \
         --epochs         $EPOCHS \
         --batch_size     $BS \
         --lr             $LR \
@@ -73,6 +80,13 @@ for MODE in contrastive mae hybrid; do
         --save_every     20 \
         --num_workers    0 \
         2>&1 | tee "logs/abl_${NAME}.log"
+
+    echo "  📊  Evaluating $NAME..."
+    python3 -m src.evaluate \
+        --checkpoint "$OUT/best_checkpoint.pth" \
+        --data_file "$DATA" \
+        --n_seeds 3 \
+        2>&1 | tee "logs/eval_abl_${NAME}.log"
 
     touch "${OUT}/done.flag"
     echo "  ✅  $NAME done"
@@ -88,8 +102,9 @@ echo "BLOCK 1 complete: $(date)"
 #   WITH vs WITHOUT QRS protection  (seed=42 only, 2 runs)
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "━━━ BLOCK 2: QRS Protection Isolation (2 runs) ━━━"
+echo "━━━ BLOCK 2: QRS Protection Isolation (6 runs) ━━━"
 
+for SEED in "${SEEDS[@]}"; do
 for QRS_FLAG in "" "--no_qrs_protect"; do
     if [ -z "$QRS_FLAG" ]; then
         LABEL="qrs_protected"
@@ -97,7 +112,7 @@ for QRS_FLAG in "" "--no_qrs_protect"; do
         LABEL="qrs_unprotected"
     fi
 
-    NAME="resnet1d_hybrid_${LABEL}_s42"
+    NAME="resnet1d_hybrid_${LABEL}_s${SEED}"
     OUT="experiments/qrs_ablation/${NAME}"
 
     if [ -f "${OUT}/done.flag" ]; then
@@ -106,7 +121,7 @@ for QRS_FLAG in "" "--no_qrs_protect"; do
     fi
 
     echo ""
-    echo "  🚀  $NAME  [QRS flag: '${QRS_FLAG:-none}']"
+    echo "  🚀  $NAME  [QRS flag: '${QRS_FLAG:-none}', seed=$SEED]"
     mkdir -p "$OUT"
 
     python3 -m src.train_ssl \
@@ -119,16 +134,23 @@ for QRS_FLAG in "" "--no_qrs_protect"; do
         --epochs         $EPOCHS \
         --batch_size     $BS \
         --lr             $LR \
-        --seed           42 \
+        --seed           $SEED \
         --data_file      "$DATA" \
         --output_dir     "$OUT" \
         --num_workers    4 \
         2>&1 | tee "logs/qrs_${NAME}.log"
 
+    echo "  📊  Evaluating $NAME..."
+    python3 -m src.evaluate \
+        --checkpoint "$OUT/best_checkpoint.pth" \
+        --data_file "$DATA" \
+        --n_seeds 3 \
+        2>&1 | tee "logs/eval_qrs_${NAME}.log"
+
     touch "${OUT}/done.flag"
     echo "  ✅  $NAME done"
 
-done
+done; done
 
 echo ""
 echo "BLOCK 2 complete: $(date)"
@@ -140,12 +162,19 @@ echo "BLOCK 2 complete: $(date)"
 #   Test: 0.0, 0.3, 0.5, 0.6 (default), 0.7, 0.9
 # ═══════════════════════════════════════════════════════════
 echo ""
-echo "━━━ BLOCK 3: Masking Ratio Sensitivity (6 runs) ━━━"
+echo "━━━ BLOCK 3: Masking Ratio Sensitivity (5 runs) ━━━"
 
-for RATIO in 0.0 0.3 0.5 0.6 0.7 0.9; do
+for RATIO in 0.0 0.2 0.5 0.8 1.0; do
     RATIO_LABEL=$(echo "$RATIO" | tr '.' '_')
     NAME="resnet1d_hybrid_mask${RATIO_LABEL}_s42"
     OUT="experiments/masking_sweep/${NAME}"
+    
+    # Conceptual fix: mask ratio 0.0 is purely contrastive.
+    if [ "$RATIO" = "0.0" ]; then
+        MODE="contrastive"
+    else
+        MODE="hybrid"
+    fi
 
     if [ -f "${OUT}/done.flag" ]; then
         echo "  ⏭  $NAME (already done)"
@@ -153,12 +182,12 @@ for RATIO in 0.0 0.3 0.5 0.6 0.7 0.9; do
     fi
 
     echo ""
-    echo "  🚀  $NAME  [mask_ratio=$RATIO]"
+    echo "  🚀  $NAME  [mask_ratio=$RATIO, resolved_mode=$MODE]"
     mkdir -p "$OUT"
 
     python3 -m src.train_ssl \
         --encoder        resnet1d \
-        --ssl_mode       hybrid \
+        --ssl_mode       "$MODE" \
         --augmentation   physio \
         --use_temporal \
         --loss_type      ntxent \
@@ -171,6 +200,13 @@ for RATIO in 0.0 0.3 0.5 0.6 0.7 0.9; do
         --output_dir     "$OUT" \
         --num_workers    4 \
         2>&1 | tee "logs/mask_${NAME}.log"
+
+    echo "  📊  Evaluating $NAME..."
+    python3 -m src.evaluate \
+        --checkpoint "$OUT/best_checkpoint.pth" \
+        --data_file "$DATA" \
+        --n_seeds 3 \
+        2>&1 | tee "logs/eval_mask_${NAME}.log"
 
     touch "${OUT}/done.flag"
     echo "  ✅  $NAME done"
@@ -206,29 +242,27 @@ if [ ! -f "${OUT}/done.flag" ]; then
         --output_dir     "$OUT" \
         --num_workers    4 \
         2>&1 | tee "logs/bl_${NAME}.log"
+        
+    echo "  📊  Evaluating $NAME..."
+    python3 -m src.evaluate \
+        --checkpoint "$OUT/best_checkpoint.pth" \
+        --data_file "$DATA" \
+        --n_seeds 3 \
+        2>&1 | tee "logs/eval_bl_${NAME}.log"
+        
     touch "${OUT}/done.flag"
     echo "  ✅  $NAME done"
 fi
 
-# Supervised baseline — no pretraining (random init)
-NAME="supervised_random_init_s42"
+# Supervised baseline — REAL END-TO-END SUPERVISED (no SSL)
+NAME="supervised_true_baseline_s42"
 OUT="experiments/baselines/${NAME}"
 if [ ! -f "${OUT}/done.flag" ]; then
-    echo "  🚀  $NAME  [no SSL — just to measure random init ceiling]"
+    echo "  🚀  $NAME  [True end-to-end supervised training Baseline]"
     mkdir -p "$OUT"
-    python3 -m src.train_ssl \
-        --encoder        resnet1d \
-        --ssl_mode       contrastive \
-        --augmentation   none \
-        --no_temporal \
-        --loss_type      ntxent \
-        --epochs         $EPOCHS \
-        --batch_size     $BS \
-        --lr             $LR \
-        --seed           42 \
-        --data_file      "$DATA" \
-        --output_dir     "$OUT" \
-        --num_workers    4 \
+    python3 -c "import torch; from src.baselines import train_supervised; \
+res = train_supervised('$DATA', torch.device('cuda' if torch.cuda.is_available() else 'cpu'), epochs=$EPOCHS, batch_size=64); \
+res.to_csv('$OUT/supervised_results.csv', index=False)" \
         2>&1 | tee "logs/bl_${NAME}.log"
     touch "${OUT}/done.flag"
     echo "  ✅  $NAME done"
@@ -246,6 +280,55 @@ echo "━━━ BLOCK 5: Computational Cost Benchmark ━━━"
 python3 -m src.experiments.computational_cost \
     --output results/compute_cost.csv \
     2>&1 | tee logs/compute_cost.log
+
+echo ""
+echo "━━━ BLOCK 6: Leave-One-Out (LOO) Augmentation Ablation (8 runs) ━━━"
+echo "Isolating the contribution of each physiological augmentation."
+
+AUGS=("constrained_time_warp" "amplitude_perturbation" "baseline_wander" "emg_noise_injection" "heart_rate_resample" "powerline_interference" "segment_dropout" "wavelet_masking")
+
+for AUG in "${AUGS[@]}"; do
+    NAME="resnet1d_hybrid_loo_${AUG}_s42"
+    OUT="experiments/loo_ablation/${NAME}"
+
+    if [ -f "${OUT}/done.flag" ]; then
+        echo "  ⏭  $NAME (already done)"
+        continue
+    fi
+
+    echo ""
+    echo "  🚀  $NAME  [excluding: $AUG]"
+    mkdir -p "$OUT"
+
+    python3 -m src.train_ssl \
+        --encoder        resnet1d \
+        --ssl_mode       hybrid \
+        --augmentation   physio \
+        --exclude_aug    "$AUG" \
+        --use_temporal \
+        --loss_type      ntxent \
+        --epochs         $EPOCHS \
+        --batch_size     $BS \
+        --lr             $LR \
+        --seed           42 \
+        --data_file      "$DATA" \
+        --output_dir     "$OUT" \
+        --num_workers    4 \
+        2>&1 | tee "logs/loo_${NAME}.log"
+
+    echo "  📊  Evaluating $NAME..."
+    python3 -m src.evaluate \
+        --checkpoint "$OUT/best_checkpoint.pth" \
+        --data_file "$DATA" \
+        --n_seeds 3 \
+        2>&1 | tee "logs/eval_loo_${NAME}.log"
+
+    touch "${OUT}/done.flag"
+    echo "  ✅  $NAME done"
+done
+
+echo ""
+echo "BLOCK 6 complete: $(date)"
 
 echo ""
 echo "=================================================="

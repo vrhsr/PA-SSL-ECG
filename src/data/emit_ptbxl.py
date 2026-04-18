@@ -9,14 +9,10 @@ Adapted from WavKAN-CL project with enhancements:
 """
 
 import wfdb
-try:
-    import wfdb.processing
-    HAS_WFDB_PROCESSING = True
-except ImportError:
-    HAS_WFDB_PROCESSING = False
 import numpy as np
 import pandas as pd
-from scipy.signal import resample, butter, filtfilt, find_peaks
+from scipy.signal import resample
+from src.data.signal_processing import bandpass_filter, z_score_normalize, detect_r_peaks
 import ast
 from tqdm import tqdm
 import os
@@ -80,35 +76,10 @@ def map_label_multiclass(scp_codes, agg_df):
 
 # ─── SIGNAL PROCESSING ───────────────────────────────────────────────────────
 
-def bandpass_filter(data, lowcut, highcut, fs, order=3):
-    """Apply Butterworth bandpass filter."""
-    nyquist = 0.5 * fs
-    low = lowcut / nyquist
-    high = highcut / nyquist
-    b, a = butter(order, [low, high], btype='band')
-    y = filtfilt(b, a, data)
-    return y
 
-def z_score_normalize(signal):
-    """Per-beat z-score normalization."""
-    mean = np.mean(signal)
-    std = np.std(signal)
-    if std < 1e-6:
-        return np.zeros_like(signal)
-    return (signal - mean) / std
 
 # ─── R-PEAK DETECTION (with fallback) ────────────────────────────────────────
 
-def detect_r_peaks(signal, fs):
-    """Detect R-peaks using wfdb.processing or scipy fallback."""
-    if HAS_WFDB_PROCESSING:
-        return wfdb.processing.gqrs_detect(signal, fs=fs)
-    else:
-        # Scipy fallback: find_peaks with height and distance constraints
-        height = np.mean(signal) + 0.5 * np.std(signal)
-        distance = int(0.4 * fs)  # minimum 400ms between peaks
-        peaks, _ = find_peaks(signal, height=height, distance=distance)
-        return peaks
 
 
 # ─── DOWNLOAD ─────────────────────────────────────────────────────────────────
