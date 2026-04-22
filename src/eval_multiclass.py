@@ -276,18 +276,36 @@ def main():
     # Step 2: Evaluate all checkpoints
     MODELS = [
         # (folder_name, encoder_type, display_label)
-        ('ssl_passl_resnet_hybrid',  'resnet1d', 'PA-HybridSSL ResNet1D (Hybrid)'),
-        ('ssl_passl_resnet_ntxent',  'resnet1d', 'PA-SSL ResNet1D (NT-Xent)'),
-        ('ssl_passl_resnet_vicreg',  'resnet1d', 'PA-SSL ResNet1D (VICReg)'),
-        ('ssl_passl_wavkan_hybrid',  'wavkan',   'PA-HybridSSL WavKAN (Hybrid)'),
-        ('ssl_passl_wavkan_ntxent',  'wavkan',   'PA-SSL WavKAN (NT-Xent)'),
-        ('ssl_passl_wavkan_vicreg',  'wavkan',   'PA-SSL WavKAN (VICReg)'),
-        ('ssl_simclr_naive_resnet',  'resnet1d', 'SimCLR + Naive Aug (ResNet1D)'),
+        # Uses seed=42 as representative run for multiclass 5-class evaluation
+        ('resnet1d_hybrid_s42',      'resnet1d', 'PA-HybridSSL ResNet1D (Hybrid)'),
+        ('resnet1d_contrastive_s42', 'resnet1d', 'PA-SSL ResNet1D (Contrastive/NT-Xent)'),
+        ('resnet1d_mae_s42',         'resnet1d', 'PA-SSL ResNet1D (MAE)'),
+        ('wavkan_hybrid_s42',        'wavkan',   'PA-HybridSSL WavKAN (Hybrid)'),
+        ('wavkan_contrastive_s42',   'wavkan',   'PA-SSL WavKAN (Contrastive/NT-Xent)'),
+        ('wavkan_mae_s42',           'wavkan',   'PA-SSL WavKAN (MAE)'),
+        # Baselines (different parent folder)
+    ]
+    # Also check baselines folder for SimCLR naive
+    BASELINE_MODELS = [
+        ('simclr_naive_s42',         'resnet1d', 'SimCLR + Naive Aug (ResNet1D)'),
+        ('supervised_true_baseline_s42', 'resnet1d', 'Supervised (ResNet1D)'),
     ]
 
     all_results = []
+
+    # Evaluate core ablation models
     for folder, enc_type, display_name in MODELS:
         ckpt = os.path.join(args.checkpoints_dir, folder, 'best_checkpoint.pth')
+        if not os.path.exists(ckpt):
+            print(f"\nSkipping {display_name}: checkpoint not found at {ckpt}")
+            continue
+        result = evaluate_checkpoint(ckpt, enc_type, df_5class, device, display_name, batch_size=args.batch_size)
+        all_results.append(result)
+
+    # Evaluate baselines (stored in sibling 'baselines/' folder)
+    baselines_dir = os.path.join(os.path.dirname(args.checkpoints_dir), 'baselines')
+    for folder, enc_type, display_name in BASELINE_MODELS:
+        ckpt = os.path.join(baselines_dir, folder, 'best_checkpoint.pth')
         if not os.path.exists(ckpt):
             print(f"\nSkipping {display_name}: checkpoint not found at {ckpt}")
             continue
