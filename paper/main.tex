@@ -437,13 +437,13 @@ To benchmark PA-SSL against current ECG foundation model standards, we evaluate 
 \toprule
 \textbf{Method} & \textbf{Accuracy} & \textbf{F1 Macro} & \textbf{AUROC} & \textbf{AUPRC} \\
 \midrule
-SimCLR + Naive Aug (baseline) & 0.5619\tiny{$\pm$0.0046} & 0.3478\tiny{$\pm$0.0016} & 0.7406\tiny{$\pm$0.0074} & TBD \\
-\midrule
-PA-SSL ResNet1D (VICReg) & 0.6446\tiny{$\pm$0.0025} & 0.4538\tiny{$\pm$0.0033} & 0.8072\tiny{$\pm$0.0021} & TBD \\
-PA-HybridSSL WavKAN (Hybrid) & 0.6553\tiny{$\pm$0.0008} & 0.4655\tiny{$\pm$0.0021} & 0.8252\tiny{$\pm$0.0029} & TBD \\
-PA-SSL WavKAN (NT-Xent) & 0.6588\tiny{$\pm$0.0035} & 0.4708\tiny{$\pm$0.0040} & 0.8208\tiny{$\pm$0.0049} & TBD \\
-PA-HybridSSL ResNet1D (Hybrid) & 0.6546\tiny{$\pm$0.0021} & 0.4656\tiny{$\pm$0.0054} & 0.8265\tiny{$\pm$0.0024} & TBD \\
-\textbf{PA-SSL ResNet1D (NT-Xent)} & \textbf{0.6664\tiny{$\pm$0.0011}} & \textbf{0.4820\tiny{$\pm$0.0033}} & \textbf{0.8297\tiny{$\pm$0.0036}} & TBD \\
+SimCLR + Naive Aug & 0.5082\tiny{$\pm$0.0014} & 0.2955\tiny{$\pm$0.0013} & 0.6854\tiny{$\pm$0.0036} & 0.3401\tiny{$\pm$0.0049} \\
+PA-SSL WavKAN (MAE) & 0.6352\tiny{$\pm$0.0031} & 0.4415\tiny{$\pm$0.0023} & 0.8074\tiny{$\pm$0.0025} & 0.4857\tiny{$\pm$0.0042} \\
+PA-SSL WavKAN (NT-Xent) & 0.6574\tiny{$\pm$0.0042} & 0.4718\tiny{$\pm$0.0067} & 0.8154\tiny{$\pm$0.0046} & 0.5140\tiny{$\pm$0.0056} \\
+PA-SSL ResNet1D (MAE) & 0.6433\tiny{$\pm$0.0027} & 0.4507\tiny{$\pm$0.0034} & 0.8153\tiny{$\pm$0.0046} & 0.4961\tiny{$\pm$0.0045} \\
+PA-HybridSSL WavKAN (Hybrid) & 0.6598\tiny{$\pm$0.0004} & 0.4720\tiny{$\pm$0.0022} & 0.8259\tiny{$\pm$0.0036} & 0.5217\tiny{$\pm$0.0065} \\
+PA-SSL ResNet1D (NT-Xent) & 0.6650\tiny{$\pm$0.0030} & 0.4791\tiny{$\pm$0.0019} & 0.8264\tiny{$\pm$0.0050} & 0.5299\tiny{$\pm$0.0050} \\
+\textbf{PA-HybridSSL ResNet1D (Hybrid)} & \textbf{0.6595\tiny{$\pm$0.0010}} & \textbf{0.4726\tiny{$\pm$0.0051}} & \textbf{0.8305\tiny{$\pm$0.0041}} & \textbf{0.5265\tiny{$\pm$0.0067}} \\
 \bottomrule
 \end{tabular}
 \vspace{0.5em}

@@ -917,49 +917,86 @@ def plot_batch_stability(batch_history, save_path=None):
 def plot_umap_dual_colored(representations, labels_condition, labels_dataset, method_name, save_path=None):
     """
     Plots a dual-pane UMAP: Left by Dataset, Right by Condition.
-    Assumes representations is N x D
+    Assumes representations is N x D.
+    Unknown / unlabeled samples (not 0 or 1) are filtered out before plotting.
     """
     try:
         import umap
     except ImportError:
         print("UMAP not installed")
         return None
-        
-    print(f"Computing UMAP for {representations.shape[0]} samples...")
-    reducer = umap.UMAP(n_components=2, random_state=42, metric='cosine')
+
+    # ── Drop any samples whose condition label is not 0 (Normal) or 1 (Abnormal)
+    valid_mask       = np.isin(labels_condition, [0, 1])
+    representations  = representations[valid_mask]
+    labels_condition = labels_condition[valid_mask]
+    labels_dataset   = labels_dataset[valid_mask]
+    print(f"Computing UMAP for {representations.shape[0]} samples (after unknown-label filtering)...")
+
+    reducer  = umap.UMAP(n_components=2, random_state=42, metric='cosine',
+                         n_neighbors=20, min_dist=0.12)
     embedding = reducer.fit_transform(representations)
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Left: Dataset
-    unique_datasets = np.unique(labels_dataset)
-    spectral_colors = plt.cm.Spectral(np.linspace(0, 1, max(3, len(unique_datasets))))
+
+    # ── Publication-quality style ──────────────────────────────────────────────
+    _rc = {
+        'font.family':        'serif',
+        'axes.titlesize':     13,
+        'axes.labelsize':     11,
+        'legend.fontsize':    10,
+        'figure.dpi':         150,
+        'savefig.dpi':        300,
+    }
+    plt.rcParams.update(_rc)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.5))
+    fig.patch.set_facecolor('white')
+
+    # ── Left panel: Dataset Origin ─────────────────────────────────────────────
+    dataset_palette = {
+        'PTBXL':   '#2166AC',   # blue
+        'MITBIH':  '#1B7837',   # green
+        'CHAPMAN': '#B2182B',   # red
+    }
+    fallback_colors  = ['#762A83', '#E66101', '#4D9221']
+    unique_datasets  = np.unique(labels_dataset)
     for i, ds in enumerate(unique_datasets):
-        mask = labels_dataset == ds
-        ax1.scatter(embedding[mask, 0], embedding[mask, 1], label=ds, alpha=0.6, s=15, color=spectral_colors[i])
-    
-    ax1.set_title(f"UMAP colored by Dataset Origin", fontsize=12, fontweight='bold')
-    ax1.legend()
+        mask  = labels_dataset == ds
+        color = dataset_palette.get(str(ds).upper(),
+                                    fallback_colors[i % len(fallback_colors)])
+        ax1.scatter(embedding[mask, 0], embedding[mask, 1],
+                    label=ds, alpha=0.55, s=12,
+                    color=color, edgecolors='none', rasterized=True)
+
+    ax1.set_title("UMAP colored by Dataset Origin", fontsize=13,
+                  fontweight='bold', pad=10)
+    ax1.legend(framealpha=0.9, markerscale=2.5, edgecolor='gray',
+               loc='upper right', handletextpad=0.5)
     ax1.axis('off')
-    
-    # Right: Condition
-    unique_conds = np.unique(labels_condition)
-    for i, cond in enumerate(unique_conds):
+
+    # ── Right panel: Diagnosis ─────────────────────────────────────────────────
+    diag_palette = {0: '#4393C3', 1: '#D6604D'}   # Normal=blue, Abnormal=red
+    diag_names   = {0: 'Normal',  1: 'Abnormal'}
+    for cond in [0, 1]:                            # draw Normal first, then Abnormal on top
         mask = labels_condition == cond
-        # Red/Blue for binary, else use diverse palette
-        color = '#D6604D' if cond in [1, 'Abnormal'] else ('#4393C3' if cond in [0, 'Normal'] else None)
-        lbl = 'Abnormal' if cond == 1 else ('Normal' if cond == 0 else str(cond))
-        ax2.scatter(embedding[mask, 0], embedding[mask, 1], label=lbl, alpha=0.6, s=15, color=color)
-        
-    ax2.set_title(f"UMAP colored by Diagnosis", fontsize=12, fontweight='bold')
-    ax2.legend()
+        if mask.sum() == 0:
+            continue
+        ax2.scatter(embedding[mask, 0], embedding[mask, 1],
+                    label=diag_names[cond], alpha=0.55, s=12,
+                    color=diag_palette[cond], edgecolors='none', rasterized=True)
+
+    ax2.set_title("UMAP colored by Diagnosis", fontsize=13,
+                  fontweight='bold', pad=10)
+    ax2.legend(framealpha=0.9, markerscale=2.5, edgecolor='gray',
+               loc='upper right', handletextpad=0.5)
     ax2.axis('off')
-    
-    plt.suptitle(f"{method_name} Representation Space", fontsize=15, fontweight='bold', y=1.02)
-    plt.tight_layout()
-    
+
+    plt.suptitle(f"{method_name} Representation Space",
+                 fontsize=15, fontweight='bold', y=1.01)
+    plt.tight_layout(w_pad=3)
+
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.savefig(save_path, bbox_inches='tight', dpi=300, facecolor='white')
+        print(f"UMAP saved to: {save_path}")
     plt.close()
     return fig
