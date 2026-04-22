@@ -1,0 +1,19 @@
+% Auto-generated 5-class PTB-XL evaluation table
+\begin{table}[h]
+\centering
+\caption{5-class PTB-XL superclass evaluation (linear probe, mean $\pm$ std over 3 seeds).}
+\label{tab:multiclass}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{Accuracy} & \textbf{F1 Macro} & \textbf{AUROC} & \textbf{AUPRC} \\
+\midrule
+PA-HybridSSL ResNet1D (Hybrid) & 0.6595$\pm$0.0010 & 0.4726$\pm$0.0051 & 0.8305$\pm$0.0041 & 0.5265$\pm$0.0067 \\
+PA-SSL ResNet1D (Contrastive/NT-Xent) & 0.6650$\pm$0.0030 & 0.4791$\pm$0.0019 & 0.8264$\pm$0.0050 & 0.5299$\pm$0.0050 \\
+PA-SSL ResNet1D (MAE) & 0.6433$\pm$0.0027 & 0.4507$\pm$0.0034 & 0.8153$\pm$0.0046 & 0.4961$\pm$0.0045 \\
+PA-HybridSSL WavKAN (Hybrid) & 0.6598$\pm$0.0004 & 0.4720$\pm$0.0022 & 0.8259$\pm$0.0036 & 0.5217$\pm$0.0065 \\
+PA-SSL WavKAN (Contrastive/NT-Xent) & 0.6574$\pm$0.0042 & 0.4718$\pm$0.0067 & 0.8154$\pm$0.0046 & 0.5140$\pm$0.0056 \\
+PA-SSL WavKAN (MAE) & 0.6352$\pm$0.0031 & 0.4415$\pm$0.0023 & 0.8074$\pm$0.0025 & 0.4857$\pm$0.0042 \\
+SimCLR + Naive Aug (ResNet1D) & 0.5082$\pm$0.0014 & 0.2955$\pm$0.0013 & 0.6854$\pm$0.0036 & 0.3401$\pm$0.0049 \\
+\bottomrule
+\end{tabular}
+\end{table}
