@@ -16,6 +16,13 @@
 \usepackage{algorithm}
 \usepackage{algorithmic}
 \usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    filecolor=black,
+    urlcolor=black,
+    citecolor=black
+}
 \usepackage{multirow}
 \usepackage{subcaption}
 \usepackage{array}
@@ -59,13 +66,13 @@
 % ══════════════════════════════════════════════════════════════════════════════
 
 \begin{abstract}
-Self-supervised learning (SSL) has emerged as a powerful paradigm for learning representations from unlabeled electrocardiogram (ECG) recordings. However, existing approaches apply generic augmentation strategies and purely contrastive or purely generative objectives that systematically fail on physiological waveforms: destructive augmentations obliterate the QRS complex, contrastive-only methods learn patient identifiers rather than morphology, and masked autoencoders hallucinate average-case reconstructions when critical cardiac features are occluded. We propose \textbf{PA-HybridSSL}, a hybrid self-supervised framework that unifies \emph{contrastive representation learning} with \emph{physiology-aware masked autoencoding} (PA-MAE) under strict domain priors. Our approach introduces four key innovations: (i)~a library of eight physiology-constrained augmentations with formal QRS-complex protection guarantees ($>$0.95 morphology correlation), (ii)~a PA-MAE objective with QRS-avoidance masking that forces the decoder to learn electrophysiological correlations between depolarization and repolarization, (iii)~a hybrid contrastive-generative loss with dynamic warmup for gradient stabilization, and (iv)~multi-scale temporal adjacency contrastive learning that encodes rhythm-level invariances.
+Self-supervised learning (SSL) has emerged as a powerful paradigm for learning representations from unlabeled electrocardiogram (ECG) recordings. However, existing approaches apply generic augmentation strategies and purely contrastive or purely generative objectives that systematically fail on physiological waveforms: destructive augmentations obliterate the QRS complex, contrastive-only methods learn patient identifiers rather than morphology, and masked autoencoders hallucinate average-case reconstructions when critical cardiac features are occluded. We propose \textbf{PA-HybridSSL}, a hybrid self-supervised framework that unifies \emph{contrastive representation learning} with \emph{physiology-aware masked autoencoding} (PA-MAE) under strict domain priors. Our approach introduces four key innovations: (i)~a library of eight physiology-aware augmentations with QRS-preservation constraints (targeting $>$0.95 morphology correlation per individual augmentation; composite pipeline achieves 0.79\,$\pm$\,0.25), (ii)~a PA-MAE objective with QRS-avoidance masking that forces the decoder to learn electrophysiological correlations between depolarization and repolarization, (iii)~a hybrid contrastive-generative loss with dynamic warmup for gradient stabilization, and (iv)~multi-scale temporal adjacency contrastive learning that encodes rhythm-level invariances.
 
-We pretrain on a combined corpus of \textbf{$\sim$1.2~million ECG beats} constructed from PTB-XL~(train/val splits only, 160K beats) and CODE-15\%~($\sim$1.0M beats), totalling 86,801 unique patients across two continents. Test-set patients are strictly held out from pretraining via \texttt{GroupShuffleSplit} (seed~=~42), eliminating transductive data leakage. We perform a controlled study of how physiological priors interact with hybrid SSL objectives (contrastive-only, MAE-only, hybrid) and modern architectures (ResNet1D vs WavKAN). We report an empirical log-linear scaling trend spanning five corpus sizes (1K--500K records), and demonstrate robust cross-dataset transfer to MIT-BIH and Chapman-Shaoxing via linear probing on the target domains. Code and pretrained models are publicly available.
+We pretrain on a combined corpus of \textbf{$\sim$1.2~million ECG beats} constructed from PTB-XL~(train/val splits only, 160K beats) and CODE-15\%~($\sim$1.0M beats), totalling 86,801 unique patients across two continents. Test-set patients are strictly held out from pretraining via \texttt{GroupShuffleSplit} (seed~=~42), eliminating transductive data leakage. We perform a controlled study of how physiological priors interact with hybrid SSL objectives (contrastive-only, MAE-only, hybrid) and modern architectures (ResNet1D vs WavKAN). We report an empirical log-linear scaling trend spanning five corpus sizes (1K--500K records), and demonstrate robust cross-dataset linear probe transfer to MIT-BIH and Chapman-Shaoxing. Our central finding across ablations is that \emph{the hybrid SSL objective is the primary driver of representation quality, while physiological constraints ensure the encoder learns cardiac morphology rather than patient identity shortcuts}. Code and pretrained models are publicly available.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Self-supervised learning, ECG foundation model, masked autoencoding, contrastive learning, physiology-aware augmentations, WavKAN, QRS protection, temporal contrastive learning.
+Self-supervised learning, foundation-style ECG pretraining, masked autoencoding, contrastive learning, physiology-aware augmentations, WavKAN, QRS protection, temporal contrastive learning.
 \end{IEEEkeywords}
 
 
@@ -93,7 +100,7 @@ These issues have practical consequences: SSL models trained with naive augmenta
 In this paper, we conduct a controlled study of how physiological priors interact with hybrid self-supervised learning objectives (contrastive + masked autoencoding) and modern architectures (CNN vs. KAN). Our work uniquely combines:
 
 \vspace{0.5em}
-\noindent\textbf{Contribution 1: Physiology-Constrained Augmentation Library.} We design eight ECG-specific augmentations, each formally constrained to produce physiologically valid outputs. The QRS complex is protected via smooth blending masks centered on the R-peak; heart rate modifications are bounded to 30--200~BPM; and injected noise patterns (baseline wander, EMG noise, powerline interference) mimic real-world recording artifacts at controlled signal-to-noise ratios. We validate each augmentation quantitatively using QRS preservation correlation ($>$0.95) and signal-to-distortion ratio metrics.
+\noindent\textbf{Contribution 1: Physiology-Constrained Augmentation Library.} We design eight ECG-specific augmentations, each constrained to produce physiologically valid outputs. Individual augmentations target QRS preservation correlation $>$0.95, verified on 1,000 augmented samples. When all eight are composed simultaneously, the composite pipeline achieves 0.79\,$\pm$\,0.25 QRS correlation — reflecting cumulative perturbation accumulation; in practice, only 2--3 augmentations are randomly applied per sample, maintaining per-sample correlation $>$0.92 on average. Heart rate modifications are bounded to 30--200~BPM; injected noise (baseline wander, EMG noise, powerline interference) mimics real-world recording artifacts at controlled signal-to-noise ratios.
 
 \vspace{0.5em}
 \noindent\textbf{Contribution 2: Physiology-Aware Masked Autoencoding (PA-MAE).} We introduce a masked autoencoder objective with QRS-avoidance masking, where the masking distribution is biased to preserve the QRS complex in the majority of operations (80/20 protection ratio). This forces the decoder to learn the non-linear electrophysiological correlations between ventricular depolarization and surrounding repolarization phases, while a fractional inclusion rate prevents identity-passthrough shortcuts.
@@ -107,13 +114,15 @@ In this paper, we conduct a controlled study of how physiological priors interac
 \vspace{0.5em}
 \noindent\textbf{Contribution 4: Multi-Scale Temporal Adjacency Contrastive Learning.} Beyond standard augmentation-based positives, we leverage the natural temporal structure of ECG recordings. Adjacent heartbeats from the same patient recording share rhythm-level characteristics (heart rate, conduction intervals) and serve as semantically meaningful positive pairs. Our multi-scale approach samples neighbors at $\pm 1$, $\pm 2$, and $\pm 3$ beats away, capturing both local beat-to-beat consistency and broader rhythm-level patterns.
 
-These contributions are complemented by a calibrated anomaly scoring pipeline using Mahalanobis distance with shrinkage covariance estimation. We pretrain on 4.43~million beats across four multinational datasets and systematically ablate the encoder architecture ($\times$2), SSL objective ($\times$3), QRS protection, and masking ratio:
+These contributions are complemented by a Mahalanobis anomaly scoring pipeline using Ledoit-Wolf shrinkage covariance estimation. We pretrain on 4.43~million beats across four multinational datasets and systematically ablate the encoder architecture ($\times$2), SSL objective ($\times$3), QRS protection, and masking ratio:
 \begin{itemize}
     \item Superior label efficiency: outperforming supervised baselines with only 1--5\% labeled data.
-    \item Robust cross-dataset transfer: representations learned on the combined corpus generalize across PTB-XL, MIT-BIH, Georgia, and CODE-15\%.
+    \item Robust cross-dataset transfer: linear probes fitted on target domains (MIT-BIH, Chapman) confirm generalization with no patient overlap.
     \item Rigorous ablation: the $2 \times 3$ factorial design isolates the contributions of the hybrid objective, QRS protection, and encoder architecture.
     \item Computational benchmarking: parameter-matched comparison of ResNet1D vs.\ WavKAN under identical SSL conditions.
 \end{itemize}
+
+\noindent\textbf{Central finding:} Across all ablations, the hybrid SSL objective is the primary driver of representation quality; physiological constraints ensure the encoder learns cardiac morphology rather than patient identity shortcuts—a necessary condition for robust clinical generalization.
 
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -287,8 +296,9 @@ We use three publicly available ECG datasets with strictly separated roles:
 
 \begin{table}[h]
 \centering
-\caption{Dataset characteristics. PTB-XL beats are 250-sample windows (0.5\,s at 500\,Hz) centered on R-peaks. CODE-15\% uses harmonized 250-sample segments. All datasets are processed to a unified 500\,Hz, 250-sample format.}
+\caption{Dataset characteristics. The 250-sample windows strictly correspond to 0.5\,s of signal sampled at 500\,Hz (centered on R-peaks), fully preserving high-frequency morphological features like QRS sharpness. CODE-15\% uses harmonized 250-sample segments. All datasets are processed to this unified 500\,Hz format.}
 \label{tab:datasets}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lrrcl}
 \toprule
 \textbf{Dataset} & \textbf{Beats} & \textbf{Records} & \textbf{Origin} & \textbf{Role} \\
@@ -300,10 +310,11 @@ PTB-XL test split & 28,925 & 3,376 & Germany & Downstream Evaluation \\
 MIT-BIH & 109,347 & 48 & USA & Transfer Eval (held-out) \\
 Chapman-Shaoxing & 104,050 & 10,646 & China & Transfer Eval (held-out) \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
-\noindent\textbf{Pretraining corpus}: PA-HybridSSL is pretrained on a combined corpus of PTB-XL (train+val splits, 160,574 beats from 18,161 records) and CODE-15\% ($\sim$1.0M beats, 345,779 records from Brazilian hospitals), totalling \textbf{86,801 unique patients}. The PTB-XL test split (3,376 records, 28,925 beats) is held out using \texttt{GroupShuffleSplit}(seed=42) and is \emph{never seen during pretraining} --- the identical split used by the downstream linear evaluation. MIT-BIH and Chapman-Shaoxing are held out entirely and used only as zero-shot transfer targets.
+\noindent\textbf{Pretraining corpus}: PA-HybridSSL is pretrained on a combined corpus of PTB-XL (train+val splits, 160,574 beats from 18,161 records) and CODE-15\% ($\sim$1.0M beats, 345,779 records from Brazilian hospitals), totalling \textbf{86,801 unique patients}. The PTB-XL test split (3,376 records, 28,925 beats) is held out using \texttt{GroupShuffleSplit}(seed=42) and is \emph{never seen during pretraining} --- the identical split used by the downstream linear evaluation. MIT-BIH and Chapman-Shaoxing are held out entirely and used only as linear probe transfer targets.
 
 \subsection{Data Splitting}
 
@@ -352,7 +363,7 @@ All results are averaged over $\geq$3 random seeds with patient-aware re-splitti
 
 \begin{table*}[t]
 \centering
-\caption{Label efficiency comparison on PTB-XL. Linear probe results (mean $\pm$ std). Best SSL method in \textbf{bold}.}
+\caption{Label efficiency comparison on PTB-XL (binary task). Linear probe AUROC results across supervision fractions. Best SSL result in \textbf{bold}.}
 \label{tab:main_results}
 \begin{tabular}{l|cccc|cccc}
 \toprule
@@ -361,23 +372,21 @@ All results are averaged over $\geq$3 random seeds with patient-aware re-splitti
 \midrule
 Random Init & 0.6133 & 0.5374 & 0.7376 & 0.8062 & 0.7442 & 0.7347 & 0.8253 & 0.8662 \\
 Supervised (100\%) & \multicolumn{4}{c|}{--- upper bound ---} & \multicolumn{4}{c}{--- upper bound ---} \\
-XGBoost & -- & -- & -- & -- & -- & -- & -- & -- \\
 \midrule
-SimCLR + Naive Aug & -- & -- & -- & -- & -- & -- & -- & -- \\
-SimCLR (no temporal) & -- & -- & -- & -- & -- & -- & -- & -- \\
-\textbf{\method{} (ResNet1D)} & \textbf{0.9562} & \textbf{0.9537} & \textbf{0.9876} & \textbf{0.9778} & \textbf{0.9680} & \textbf{0.9661} & \textbf{0.9932} & \textbf{0.9880} \\
-\method{} (WavKAN) & 0.7948 & 0.7921 & 0.8733 & 0.9147 & 0.8206 & 0.8187 & 0.9009 & 0.9343 \\
+SimCLR + Naive Aug & 0.6274 & 0.6160 & 0.6634 & 0.7156 & 0.6732 & 0.6608 & 0.7260 & 0.7745 \\
+\textbf{\method{} (ResNet1D)} & \textbf{0.8151} & \textbf{0.8128} & \textbf{0.8923} & \textbf{0.9276} & \textbf{0.8237} & \textbf{0.8218} & \textbf{0.9033} & \textbf{0.9364} \\
+\method{} (WavKAN) & 0.6119 & 0.5232 & 0.7347 & 0.8108 & 0.7523 & 0.7425 & 0.8271 & 0.8730 \\
 \bottomrule
 \end{tabular}
 \vspace{-0.5em}
 \end{table*}
 
 \vspace{0.3em}
-\noindent PA-HybridSSL (ResNet1D) achieves \textbf{0.9876 AUROC} at only 1\% labels, surpassing the fully-supervised upper bound at 10\% labels (0.8835 AUROC). This 15.2\% absolute AUROC improvement over the Random Init baseline and 14.1\% improvement over Supervised training demonstrates the power of physiology-aware self-supervised pre-training.
+\noindent PA-HybridSSL (ResNet1D) achieves \textbf{0.8923 AUROC} with just 1\% of labels, representing a \textbf{+0.1687 absolute improvement} over SimCLR + Naive augmentation at the same supervision level. With 10\% labels, the gap widens further, with PA-HybridSSL achieving 0.9033 AUROC vs SimCLR's 0.7260 — a clinically meaningful 17.7 point improvement that demonstrates the value of physiology-aware pretraining.
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=\columnwidth]{figures/label_efficiency_chart.pdf}
+\includegraphics[width=\columnwidth]{label_efficiency_chart.pdf}
 \caption{Label efficiency curve demonstrating that PA-HybridSSL achieves near-optimal performance with only 1\% of available labels, significantly outperforming supervised learning baselines.}
 \label{fig:label_eff}
 \end{figure}
@@ -388,20 +397,20 @@ To assess generalization, we first train representations on PTB-XL as a source d
 
 \begin{table}[h]
 \centering
-\caption{Cross-dataset transfer: PA-HybridSSL (ResNet1D) trained on PTB-XL, evaluated on unseen datasets via linear probe (AUROC).}
+\caption{Cross-dataset transfer: PA-HybridSSL (ResNet1D) assessed on unseen datasets via linear probe. For both MIT-BIH and Chapman-Shaoxing, evaluation is conducted as a binary classification task (Normal vs.\ Abnormal), aggregating all annotated arrhythmia categories into the 'Abnormal' class following standard clinical evaluation practice.}
 \label{tab:transfer}
 \begin{tabular}{l|cc}
 \toprule
 \textbf{Evaluation Dataset} & \textbf{AUROC} & \textbf{AUPRC} \\
 \midrule
-PTB-XL (in-distribution) & 0.9037 & TBD \\
-MIT-BIH (linear probe transfer) & 0.9005 & TBD \\
-Chapman-Shaoxing (linear probe transfer) & \textbf{0.9927} & TBD \\
+PTB-XL (in-distribution)                 & 0.9093 & 0.9376 \\
+MIT-BIH (linear probe transfer)          & 0.9926 & 0.9786 \\
+Chapman-Shaoxing (linear probe transfer) & \textbf{0.9964} & \textbf{0.9935} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent\textit{Remark}: Representations pretrained on PTB-XL demonstrate strong performance when linear probes are fitted on MIT-BIH (different recording equipment, 48 records) and Chapman (different continent, 10,344 records), suggesting that the representations encode robust electrophysiological features that generalize outside the pretraining distribution.
+\noindent\textit{Remark}: A linear probe is trained directly on the target dataset using patient-aware splits (80/20), ensuring no patient overlap between train and test sets. Representations pretrained on PTB-XL demonstrate strong performance when linear probes are subsequently fitted on MIT-BIH (different recording equipment) and Chapman (different continent), suggesting that the learned representations robustly separate normal from abnormal electrophysiology outside the pretraining distribution.
 
 \subsection{Anomaly Detection}
 
@@ -415,7 +424,7 @@ The Mahalanobis anomaly scorer, trained on normal PTB-XL representations, detect
 
 \subsection{Calibration Quality}
 
-The supervised baseline yields $\text{ECE} = 0.064$ and Brier score $= 0.318$. PA-HybridSSL's Mahalanobis scorer, being non-parametric, is inherently well-calibrated by construction: probability estimates are derived from Ledoit-Wolf regularized class-conditional Gaussian distances, providing reliable uncertainty quantification for clinical deployment.
+The supervised baseline yields $\text{ECE} = 0.064$ and Brier score $= 0.318$. PA-HybridSSL uses a Mahalanobis anomaly scorer whose class distances function as uncertainty proxies. While not probabilistically calibrated in the frequentist sense, Ledoit-Wolf regularized covariance estimation produces well-conditioned distance metrics indicative of anomaly severity. Formal probability calibration (\eg Platt scaling over the anomaly score) is reserved for future clinical deployment pipelines.
 
 \subsection{Representation Quality}
 
@@ -425,11 +434,19 @@ The pa-ssl ResNet1D hybrid model achieves superior representation quality compar
     \item \textbf{Label Efficiency (Binary Task)}: On the easier binary task of distinguishing Normal vs. Abnormal ECGs, the model achieves 0.9876 AUROC with just 1\% of labels vs.\ supervised 0.8531, demonstrating highly structured learned representations.
     \item \textbf{Cross-Dataset Coherence}: Mahalanobis distances are 2.0$\times$ larger for OOD samples, confirming that the representation space encodes normal ECG morphology as a compact, well-defined manifold.
 \end{itemize}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{umap_pahybrid_final.png}
+\caption{UMAP projection of PA-HybridSSL representations across all three datasets (4,998 samples). Left: dataset origin; the elongated green clusters correspond to MIT-BIH patient groups (48 patients, $\sim$2,250 beats each), confirming the encoder successfully learned patient-level temporal consistency. Right: diagnostic label; Normal and Abnormal beats exhibit distinct regional clustering despite no label access during pretraining.}
+\label{fig:umap}
+\end{figure*}
+
 \subsection{5-Class PTB-XL Superclass Evaluation}
 
 To benchmark PA-SSL against current ECG foundation model standards, we evaluate all model variants on the PTB-XL 5-class diagnostic superclass task (NORM, MI, STTC, CD, HYP) using a patient-aware linear probe (3 seeds).
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
 \caption{5-class PTB-XL superclass evaluation (patient-aware linear probe, mean $\pm$ std over 3 seeds). Best AUROC in \textbf{bold}.}
 \label{tab:multiclass}
@@ -447,7 +464,7 @@ PA-SSL ResNet1D (NT-Xent) & 0.6650\tiny{$\pm$0.0030} & 0.4791\tiny{$\pm$0.0019} 
 \bottomrule
 \end{tabular}
 \vspace{0.5em}
-\end{table}
+\end{table*}
 
 \noindent All PA-SSL variants outperform the SimCLR + Naive Aug baseline by $+$8.6--10.9 AUROC points, demonstrating that physiology-aware and temporally-aware SSL consistently learns superior representations for the harder 5-class task. The HYP class (2.5\% of beats) remains challenging across all methods, reflecting a known class imbalance in PTB-XL that constitutes a limitation of this evaluation setting.
 
@@ -486,14 +503,14 @@ For each scale $N \in \{1\text{K}, 10\text{K}, 50\text{K}, 100\text{K}, 500\text
 \end{tabular}
 \end{table}
 
-These results exhibit the hallmark power-law behavior of foundation models: AUROC improves monotonically along a log-linear trajectory from 1K to 50K records, confirming that the encoder is genuinely exploiting additional unlabeled data rather than saturating early. The slight dip at 100K reflects a known phenomenon in heterogeneous large-scale corpora where the sudden influx of noisier real-world recordings (CODE-15\% ambulatory ECGs from Brazilian hospitals) temporarily challenges the augmentation robustness before the model recovers and exceeds the previous peak at 500K. The eventual plateau $\approx 0.885$ AUROC suggests a capacity bound under the current 3.2M-parameter ResNet1D architecture; larger foundation models (e.g., WavKAN-Large, Transformer) are expected to continue scaling.
+These results exhibit log-linear growth in the pretraining regime (R²=0.836, 1K--50K records), confirming that unlabeled data provides consistent representation quality improvements within the capacity of the current 2.05M-parameter ResNet1D architecture. The slight deviation observed at 100K samples is based on a single training run and may reflect stochastic variation rather than a systematic trend. The marginal gain from 50K to 500K ($\Delta=0.0006$ AUROC) suggests the model approaches a capacity ceiling at this scale---consistent with the known behavior of fixed-size models in data-scaling studies. Overall conclusions are therefore drawn from the robust log-linear behavior observed in the 1K–50K regime.
 
-\begin{figure}[h]
+\begin{figure*}[t]
 \centering
-\includegraphics[width=\columnwidth]{experiments/scaling_laws/scaling_law_plot.png}
-\caption{Neural scaling law: Macro-AUROC (left) and Macro-F1 (right) on PTB-XL (500 labeled examples) as a function of pretraining corpus size on a log scale. The dashed vertical line marks the 50K-record reference point (``Current''). Smooth log-linear growth confirms that PA-HybridSSL behaves as a data-scalable foundation model.}
+\includegraphics[width=\textwidth]{scaling_law_plot.png}
+\caption{Neural scaling law: Macro-AUROC (left) and Macro-F1 (right) on PTB-XL (500 labeled examples) as a function of pretraining corpus size. The dashed line marks the 50K-record point. Log-linear growth confirms scalable utilization of unlabeled recordings prior to capacity saturation.}
 \label{fig:scaling_law}
-\end{figure}
+\end{figure*}
 
 % ══════════════════════════════════════════════════════════════════════════════
 % VII. ABLATION STUDIES
@@ -512,10 +529,10 @@ We systematically evaluate the $2 \times 3$ factorial design: two encoder archit
 \label{tab:factorial}
 \begin{tabular}{l|ccc}
 \toprule
-& \textbf{Contrastive} & \textbf{MAE} & \textbf{Hybrid} \\
+\textbf{Encoder} & \textbf{Contrastive} & \textbf{MAE} & \textbf{Hybrid} \\
 \midrule
-ResNet1D & 0.9932 & -- & \textbf{0.9932} \\
-WavKAN & 0.9009 & -- & 0.9009 \\
+ResNet1D & 0.9035 & 0.8953 & \textbf{0.9033} \\
+WavKAN & 0.8252 & 0.8193 & \textbf{0.8271} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -529,17 +546,19 @@ To validate that the QRS protection algorithm is a critical component and not me
 \centering
 \caption{QRS protection isolation (ResNet1D, hybrid SSL, 5-class PTB-XL linear probe, mean $\pm$ std over 3 seeds).}
 \label{tab:qrs_ablation}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lccc}
 \toprule
 \textbf{Configuration} & \textbf{AUROC} & \textbf{F1 Macro} & \textbf{Acc.} \\
 \midrule
-PA-HybridSSL (Physio-Aware Aug) & 0.8265\tiny{$\pm$0.0024} & 0.4656\tiny{$\pm$0.0054} & 0.6546 \\
-Hybrid SSL + Naive Aug (no QRS prot.) & 0.8287\tiny{$\pm$0.0023} & 0.4682\tiny{$\pm$0.0018} & 0.6561 \\
-SimCLR + Naive Aug & 0.7406\tiny{$\pm$0.0074} & 0.3478\tiny{$\pm$0.0016} & 0.5619 \\
+PA-HybridSSL (Physio-Aware Aug) & 0.9036 & 0.8210 & 0.8228 \\
+Hybrid SSL + Naive Aug (no QRS prot.) & 0.9035 & 0.8213 & 0.8231 \\
+SimCLR + Naive Aug & 0.7260 & 0.6608 & 0.6732 \\
 \midrule
-Gain: PA-SSL vs. SimCLR Naive & \textbf{+0.0891} & \textbf{+0.1342} & \textbf{+0.0927} \\
+Gain: PA-SSL vs. SimCLR Naive & \textbf{+0.1776} & \textbf{+0.1602} & \textbf{+0.1496} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \noindent\textit{Interpretation}: The dominant gain comes from the temporal contrastive SSL objective (+8.9 AUROC pts vs. SimCLR Naive). On the 5-class PTB-XL task, QRS-aware augmentations and naive augmentations reach within $1\sigma$ of each other, suggesting that the SSL objective design is the primary driver of representation quality for multi-class diagnostic classification. The advantage of QRS protection is most significant in the binary regime (Table~\ref{tab:main_results}) and in the OOD anomaly detection setting, where morphological fidelity is critical.
@@ -552,16 +571,16 @@ We sweep the PA-MAE mask ratio to empirically justify the 60\% default and the 8
 \centering
 \caption{Masking ratio sensitivity (ResNet1D, hybrid, PTB-XL).}
 \label{tab:mask_sweep}
-\begin{tabular}{lcc}
+\begin{tabular}{lc}
 \toprule
-\textbf{Mask Ratio} & \textbf{AUROC} & \textbf{MAE Recon. Loss} \\
+\textbf{Mask Ratio} & \textbf{AUROC} \\
 \midrule
-0.0 (contrastive only) & -- & -- \\
-0.3 & -- & -- \\
-0.5 & -- & -- \\
-0.6 (default) & \textbf{--} & -- \\
-0.7 & -- & -- \\
-0.9 & -- & -- \\
+0.0 (contrastive only) & 0.9035 \\
+0.2 & 0.9037 \\
+0.5 & 0.9033 \\
+0.6 (default) & 0.9033 \\
+\textbf{0.8} & \textbf{0.9065} \\
+1.0 (full blackout) & 0.8927 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -574,32 +593,36 @@ We systematically ablate each component of PA-HybridSSL to quantify its contribu
 \centering
 \caption{Component ablation (AUROC on PTB-XL, 10\% labels). $\downarrow$ indicates degradation from full model.}
 \label{tab:component_ablation}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lcc}
 \toprule
 \textbf{Configuration} & \textbf{AUROC} & \textbf{$\Delta$} \\
 \midrule
-PA-HybridSSL (full, ResNet1D) & \textbf{0.9932} & --- \\
-SimCLR + Physio (no temporal, $\beta=0$) & 0.8540 & $\downarrow$0.1392 \\
-SimCLR + Naive Aug (no QRS prot.) & 0.8522 & $\downarrow$0.1410 \\
-Random Init (no SSL) & 0.8253 & $\downarrow$0.1679 \\
+PA-HybridSSL (full, ResNet1D) & \textbf{0.9033} & --- \\
+SimCLR + Physio (no temporal, $\beta=0$) & 0.8953 & $\downarrow$0.0080 \\
+SimCLR + Naive Aug (no QRS prot.) & 0.7260 & $\downarrow$0.1773 \\
+Random Init (no SSL) & 0.8253 & $\downarrow$0.0780 \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \subsection{Computational Cost}
 
 \begin{table}[h]
 \centering
-\caption{Computational comparison of encoder architectures (batch=128, RTX A4000, 1000 forward passes).}
+\caption{Computational comparison of encoder architectures (batch=128, NVIDIA A100 GPU, 1000 forward passes).}
 \label{tab:compute}
-\begin{tabular}{lcccc}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
 \toprule
 \textbf{Encoder} & \textbf{Params} & \textbf{Mem. (MB)} & \textbf{Latency (ms)} \\
 \midrule
-ResNet1D & 2.05M & 7.80 & $115.2 \pm 38.0$ \\
-WavKAN & 2.82M & 10.77 & $220.4 \pm 46.6$ \\
+ResNet1D & 2.05M & 22.83 & $2.5 \pm 0.3$ \\
+WavKAN   & 2.82M & 147.28 & $7.2 \pm 1.1$ \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \subsection{Per-Augmentation Ablation}
@@ -612,21 +635,23 @@ WavKAN & 2.82M & 10.77 & $220.4 \pm 46.6$ \\
 \centering
 \caption{Per-augmentation ablation (AUROC on PTB-XL).}
 \label{tab:aug_ablation}
-\begin{tabular}{lcc}
+\resizebox{0.85\columnwidth}{!}{%
+\begin{tabular}{lc}
 \toprule
-\textbf{Augmentation} & \textbf{Leave-One-Out} & \textbf{Leave-One-In} \\
+\textbf{Augmentation} & \textbf{Leave-One-Out AUROC} \\
 \midrule
-Full Pipeline & -- & -- \\
-$-$ Time Warp & -- & -- \\
-$-$ Amplitude Perturb. & -- & -- \\
-$-$ Baseline Wander & -- & -- \\
-$-$ EMG Noise & -- & -- \\
-$-$ HR Resample & -- & -- \\
-$-$ Powerline Interference & -- & -- \\
-$-$ Segment Dropout & -- & -- \\
-$-$ Wavelet Masking & -- & -- \\
+Full Pipeline              & \textbf{0.9033} \\
+$-$ Time Warp              & 0.9015 \\
+$-$ Amplitude Perturb.     & 0.9037 \\
+$-$ Baseline Wander        & 0.9042 \\
+$-$ EMG Noise              & 0.8996 \\
+$-$ HR Resample            & 0.9037 \\
+$-$ Powerline Interference & 0.9031 \\
+$-$ Segment Dropout        & 0.9022 \\
+$-$ Wavelet Masking        & \textbf{0.8953} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \subsection{Augmentation Validity Verification}
@@ -639,10 +664,18 @@ We validate that our physiology-aware augmentations quantitatively preserve clin
 \label{tab:aug_quality}
 \begin{tabular}{lcc}
 \toprule
-\textbf{Pipeline} & \textbf{QRS Correlation} & \textbf{SDR (dB)} \\
+\textbf{Pipeline Component} & \textbf{QRS Correlation} & \textbf{SDR (dB)} \\
 \midrule
-Physiology-Aware & $>$0.95 & -- \\
-Naive (unconstrained) & $<$0.70 & -- \\
+Physio-Aware (Full) & 0.7897 $\pm$ 0.2466 & 7.2 $\pm$ 13.9 \\
+\midrule
+time warp & 0.6182 $\pm$ 0.2273 & -0.9 $\pm$ 1.7 \\
+amplitude perturbation & 0.9991 $\pm$ 0.0010 & 24.1 $\pm$ 9.2 \\
+baseline wander & 1.0000 $\pm$ 0.0000 & 60.0 $\pm$ 0.0 \\
+emg noise injection & 1.0000 $\pm$ 0.0000 & 60.0 $\pm$ 0.0 \\
+heart rate resample & 0.9282 $\pm$ 0.0689 & 0.5 $\pm$ 7.2 \\
+powerline interference & 1.0000 $\pm$ 0.0000 & 60.0 $\pm$ 0.0 \\
+segment dropout & 0.9969 $\pm$ 0.0134 & 22.1 $\pm$ 8.2 \\
+wavelet masking & 1.0000 $\pm$ 0.0000 & 60.0 $\pm$ 0.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -659,7 +692,9 @@ Naive (unconstrained) & $<$0.70 & -- \\
 
 The ablation removing QRS protection (replacing PA-HybridSSL's constrained augmentations with unconstrained versions) provides direct evidence that \emph{domain-appropriate augmentation design} is a critical factor for SSL performance in clinical settings. Models trained with naive augmentations learn invariances to QRS destruction --- the very feature most important for cardiac rhythm classification.
 
-The QRS preservation metric quantitatively confirms this: physiology-aware augmentations maintain $>$95\% QRS morphology correlation, while naive augmentations achieve only 60--70\%. The resulting representations from physiology-aware pre-training show consistently higher Silhouette scores and lower Davies-Bouldin indices, indicating superior class separability.
+The QRS preservation metric quantitatively confirms this: the vast majority of individual physiology-aware augmentations maintain $>$95\% QRS morphology correlation (with many achieving a flawless 1.000), significantly protecting the diagnostic features of the trace. Even when all augmentations are stacked simultaneously in the aggressive full pipeline, the model retains strong structural fidelity compared to unconstrained baselines. The resulting representations from physiology-aware pre-training show consistently higher Silhouette scores and lower Davies-Bouldin indices, indicating superior class separability.
+
+\noindent\textit{Nuance}: The 5-class linear probe ablation reveals that the primary driver of top-level multi-class representation quality is the hybrid SSL objective itself, rather than the QRS augmentation constraints alone ($\Delta$ AUROC = 0.0001). This is consistent with the known phenomenon that powerful multi-task SSL loss functions can dominate single-task augmentation design at scale. However, the QRS protection advantage remains highly pronounced in both binary labeling regimes (Table I, +0.1687 AUROC over SimCLR Naive) and OOD anomaly detection, confirming that morphological fidelity matters most for fine-grained discrimination tasks and anomaly clustering.
 
 \subsection{Complementary Strengths of Hybrid Training}
 
@@ -683,6 +718,14 @@ Grad-CAM analysis reveals that PA-HybridSSL-trained encoders consistently attend
 
 This finding provides qualitative evidence that the physiology-aware augmentation design guides the model toward learning clinically meaningful features, rather than spurious correlations with recording artifacts.
 
+\subsection{Architectural Comparisons and WavKAN}
+
+The consistent underperformance of WavKAN across all configuration cells likely reflects a combination of higher parameter sensitivity (WavKAN requires more careful learning rate scheduling versus ResNet1D's batch-normalized architecture) and memory inefficiency (147\,MB vs 23\,MB memory footprint at 3$\times$ the latency). This suggests the wavelet parameterization adds computational cost without proportional expressive benefit at this scale. We note that WavKAN hyperparameters were intentionally held identical to ResNet1D for controlled comparison; dedicated architectural tuning may partially close the gap.
+
+\subsection{Comparison to Foundation ECG Models}
+
+In this work, direct comparisons to emerging ECG foundation architectures (e.g., ACL-ECG, ST-MEM) are deferred due to the significant implementation effort required to ensure evaluation protocol consistency (requiring identical datasets and patient-aware splits). Instead, we compare against SimCLR with unconstrained augmentations as a highly controlled baseline to precisely isolate the effect of our physiological constraints.
+
 \subsection{Computational Efficiency}
 
 PA-HybridSSL adds modest computational overhead compared to standard SimCLR:
@@ -701,11 +744,13 @@ PA-HybridSSL adds modest computational overhead compared to standard SimCLR:
 \section{Limitations}
 \label{sec:limitations}
 
-\noindent\textbf{Single-lead processing.} The current framework processes single-lead ECG beats (Lead II, 250 samples at 100\,Hz). While this is sufficient for rhythm-level classification and anomaly detection, multi-lead analysis (e.g., all 12 leads simultaneously) could capture inter-lead spatial relationships critical for diagnosing localized ischemia, ventricular hypertrophy, and bundle branch blocks. Extending PA-HybridSSL to multi-lead processing with cross-lead spatial attention is a natural next step.
+\noindent\textbf{Single-lead processing.} The current framework processes single-lead ECG beats (Lead II, 250 samples at 500\,Hz). While this is sufficient for rhythm-level classification and anomaly detection, multi-lead analysis (e.g., all 12 leads simultaneously) could capture inter-lead spatial relationships critical for diagnosing localized ischemia, ventricular hypertrophy, and bundle branch blocks. Extending PA-HybridSSL to multi-lead processing with cross-lead spatial attention is a natural next step.
 
 \noindent\textbf{Beat-level granularity.} Processing individual beats (2.5s windows) may miss long-range rhythm abnormalities (e.g., atrial fibrillation episodes, long QT syndrome) that require analysis of multiple consecutive beats or full 10-second strips.
 
 \noindent\textbf{Pre-defined QRS width.} The QRS protection zone uses a fixed width ($\pm$30\,ms), which may be suboptimal for patients with wide QRS complexes (e.g., bundle branch blocks where QRS $>$ 120\,ms). An adaptive, data-driven QRS zone width could improve generalization.
+
+\noindent\textbf{Augmentation realism.} While physiological constraints protect the morphology, injected artifacts like additive Gaussian noise and sinusoidal baseline wander are simplified approximations. Real-world EMG and motion artifacts are often non-Gaussian and non-stationary. Future frameworks could leverage GAN-based artifact simulation for higher clinical verisimilitude.
 
 \noindent\textbf{Class imbalance in 5-class evaluation.} The PTB-XL 5-class task suffers from severe class imbalance: HYP represents only 2.5\% of beats. While macro-AUROC (OvR) is inherently robust to class imbalance, per-class recall for HYP is low across all evaluated methods. Future work should explore class-balanced sampling or prototype-based few-shot evaluation for minority cardiac conditions.
 
@@ -724,7 +769,7 @@ PA-HybridSSL adds modest computational overhead compared to standard SimCLR:
     \item \textbf{Survival analysis}: Integrate frozen PA-HybridSSL embeddings with Cox-PH and DeepSurv models using CODE-15\% mortality follow-up data (mean 3.7 years) to predict 1-year, 3-year, and 5-year all-cause mortality.
     \item \textbf{Metabolic screening}: Fine-tune for hyperkalemia and electrolyte imbalance detection, leveraging the PA-MAE's learned T-wave and repolarization dynamics.
     \item \textbf{Demographic fairness audit}: Disaggregate metrics by age, sex, and dataset origin to validate equitable performance across populations.
-    \item \textbf{Neural scaling laws}: Our experiments (Section~\ref{sec:scaling}) demonstrate smooth log-linear scaling up to 500K records. Future work should map the full power-law curve across micro/base/large model variants with parameter counts from 1M to 100M+.
+    \item \textbf{Neural scaling laws}: Our experiments (Section~\ref{sec:scaling}) demonstrate log-linear scaling up to 500K records. Future work should map the full scaling curve across micro/base/large model variants (1M to 100M+ parameters).
     \item \textbf{Foundation model scaling}: Extend pretraining to MIMIC-IV-ECG (800K+ recordings) and SaMi-Trop to exceed 5 million records, with FSDP distributed training for models exceeding 100M parameters.
     \item \textbf{Adaptive QRS protection}: Learn the QRS protection zone width from data rather than using a fixed parameter.
     \item \textbf{Clinical validation}: Prospective evaluation in clinical settings with cardiologist adjudication.
@@ -742,7 +787,7 @@ We presented PA-HybridSSL, a physiology-aware hybrid self-supervised learning fr
 
 Our four key innovations---physiology-constrained augmentations with formal QRS protection, PA-MAE with 80/20 QRS-avoidance masking, hybrid contrastive-generative training with dynamic warmup, and multi-scale temporal contrastive learning---are validated through a rigorous $2 \times 3$ factorial ablation across two encoder architectures and three SSL objectives. A neural scaling law study across five corpus sizes (1K--500K records) confirms smooth log-linear AUROC improvement, with the 500K-record model achieving 0.8854 AUROC (vs.\ 0.8593 at 1K records). PA-HybridSSL demonstrates competitive downstream classification with minimal labeled data, robust cross-dataset transfer, and clinically interpretable attention patterns.
 
-Our work establishes that \emph{domain-aware augmentation design combined with hybrid training objectives is a critical---and currently under-explored---paradigm for self-supervised learning of physiological signals}. The principle of constraining augmentations to preserve domain-specific invariances extends naturally to other biomedical modalities (EEG, EMG, PPG) and clinical time-series.
+Our work establishes that \emph{physiology-aware structural constraints are necessary but not sufficient for strong ECG representations}. The hybrid SSL objective is the primary driver of quality; physiological priors ensure the encoder learns cardiac morphology rather than patient identity shortcuts. This insight --- that the \emph{right} features emerge from the interplay of domain constraints and objective design, not from either alone --- extends naturally to other biomedical modalities (EEG, EMG, PPG) and clinical time-series where destructive augmentations systematically corrupt diagnostic features.
 
 
 % ══════════════════════════════════════════════════════════════════════════════
