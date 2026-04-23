@@ -31,7 +31,7 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, r2_score, mean_absolute_error
 from tqdm import tqdm
 
@@ -160,9 +160,9 @@ def probe_patient_id(train_reprs, train_pids, test_reprs, test_pids, max_patient
     all_pids = np.concatenate([train_pids, test_pids])
     le.fit(all_pids)
 
-    # Keep only patients with >= 5 beats in train
+    # Keep only patients with >= 2 beats in train
     unique, counts = np.unique(train_pids, return_counts=True)
-    valid_pids = unique[counts >= 5]
+    valid_pids = unique[counts >= 2]
     if len(valid_pids) > max_patients:
         rng = np.random.default_rng(42)
         valid_pids = rng.choice(valid_pids, max_patients, replace=False)
@@ -170,7 +170,7 @@ def probe_patient_id(train_reprs, train_pids, test_reprs, test_pids, max_patient
     train_mask = np.isin(train_pids, valid_pids)
     test_mask = np.isin(test_pids, valid_pids)
 
-    if train_mask.sum() < 50 or test_mask.sum() < 10:
+    if train_mask.sum() < 10 or test_mask.sum() < 2:
         return {'patient_id_acc': float('nan'), 'n_patients': 0}
 
     tr = train_reprs[train_mask]
@@ -299,11 +299,10 @@ def main():
         print(f"  SEED: {seed}")
         print(f"{'#'*60}")
 
-        # Patient-aware 80/20 split
-        gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=seed)
-        train_idx, test_idx = next(gss.split(df, groups=df['patient_id']))
-        df_train = df.iloc[train_idx].reset_index(drop=True)
-        df_test = df.iloc[test_idx].reset_index(drop=True)
+        # Random split so we can do patient ID recognition (needs same patient in train & test)
+        df_train, df_test = train_test_split(df, test_size=0.2, random_state=seed)
+        df_train = df_train.reset_index(drop=True)
+        df_test = df_test.reset_index(drop=True)
         print(f"  Train: {len(df_train):,} | Test: {len(df_test):,}")
 
         # ── PA-HybridSSL (ResNet1D + Hybrid) ──────────────────────────────
@@ -342,6 +341,9 @@ def main():
             if len(vals) > 0:
                 row[f'{col}_mean'] = float(np.mean(vals))
                 row[f'{col}_std'] = float(np.std(vals))
+            else:
+                row[f'{col}_mean'] = float('nan')
+                row[f'{col}_std'] = float('nan')
         summary.append(row)
 
     summary_df = pd.DataFrame(summary)
