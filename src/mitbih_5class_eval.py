@@ -129,14 +129,34 @@ def extract_representations(encoder, df, device, batch_size=512):
 
 # ─── EVALUATION ───────────────────────────────────────────────────────────────
 
+def sanitize_representations(reprs):
+    """Replace NaN/Inf with column means — prevents sklearn crashes from bad encoder outputs."""
+    if not np.isfinite(reprs).all():
+        n_bad = (~np.isfinite(reprs)).sum()
+        print(f"    [WARN] Found {n_bad} NaN/Inf values in representations — imputing with column mean")
+        col_means = np.nanmean(reprs, axis=0)
+        col_means = np.where(np.isfinite(col_means), col_means, 0.0)
+        inds = np.where(~np.isfinite(reprs))
+        reprs[inds] = np.take(col_means, inds[1])
+    return reprs
+
+
 def evaluate_linear_probe(train_reprs, train_labels, test_reprs, test_labels):
     """Fit logistic regression and return metrics."""
     classes = np.unique(np.concatenate([train_labels, test_labels]))
     n_classes = len(classes)
 
+    # Sanitize NaN/Inf before fitting
+    train_reprs = sanitize_representations(train_reprs.copy())
+    test_reprs = sanitize_representations(test_reprs.copy())
+
     scaler = StandardScaler()
     tr_s = scaler.fit_transform(train_reprs)
     te_s = scaler.transform(test_reprs)
+
+    # Final safety: replace any residual NaN after scaler
+    tr_s = np.nan_to_num(tr_s, nan=0.0, posinf=0.0, neginf=0.0)
+    te_s = np.nan_to_num(te_s, nan=0.0, posinf=0.0, neginf=0.0)
 
     clf = LogisticRegression(
         max_iter=1000, C=1.0, solver='lbfgs',
@@ -196,23 +216,28 @@ def evaluate_linear_probe(train_reprs, train_labels, test_reprs, test_labels):
 
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 
-CHECKPOINTS = {
-    'PA-HybridSSL (ResNet1D)': ('remote/ssl_passl_resnet_hybrid/best_checkpoint.pth', 'resnet1d'),
-    'SimCLR + Naive Aug':      ('remote/ssl_simclr_naive_resnet/best_checkpoint.pth', 'resnet1d'),
-    'PA-HybridSSL (WavKAN)':   ('remote/ssl_passl_wavkan_hybrid/best_checkpoint.pth', 'wavkan'),
-}
-
-
 def main():
     parser = argparse.ArgumentParser(description='MIT-BIH 5-class AAMI arrhythmia evaluation')
     parser.add_argument('--mitbih_csv', type=str,
                         default='data/mitbih_processed.csv')
-    parser.add_argument('--checkpoints_dir', type=str, default='remote')
+    parser.add_argument('--passl_checkpoint', type=str, required=True,
+                        help='Path to PA-HybridSSL (ResNet1D) best_checkpoint.pth')
+    parser.add_argument('--simclr_checkpoint', type=str, required=True,
+                        help='Path to SimCLR Naive (ResNet1D) best_checkpoint.pth')
+    parser.add_argument('--wavkan_checkpoint', type=str, default='',
+                        help='Optional: path to WavKAN hybrid best_checkpoint.pth')
     parser.add_argument('--output_dir', type=str, default='results/mitbih_5class')
     parser.add_argument('--seeds', type=int, nargs='+', default=[42, 7, 123])
     parser.add_argument('--max_samples', type=int, default=0,
                         help='Cap samples for testing (0 = all)')
     args = parser.parse_args()
+
+    CHECKPOINTS = {
+        'PA-HybridSSL (ResNet1D)': (args.passl_checkpoint, 'resnet1d'),
+        'SimCLR + Naive Aug':      (args.simclr_checkpoint, 'resnet1d'),
+    }
+    if args.wavkan_checkpoint:
+        CHECKPOINTS['PA-HybridSSL (WavKAN)'] = (args.wavkan_checkpoint, 'wavkan')
 
     os.makedirs(args.output_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -229,11 +254,7 @@ def main():
 
     all_results = []
 
-    for model_name, (ckpt_rel, enc_name) in CHECKPOINTS.items():
-        ckpt_path = os.path.join(args.checkpoints_dir, os.path.basename(os.path.dirname(ckpt_rel)),
-                                 'best_checkpoint.pth')
-        if not os.path.exists(ckpt_path):
-            ckpt_path = ckpt_rel  # try as-is
+    for model_name, (ckpt_path, enc_name) in CHECKPOINTS.items():
         if not os.path.exists(ckpt_path):
             print(f"\n  [SKIP] {model_name}: checkpoint not found at {ckpt_path}")
             continue

@@ -83,6 +83,10 @@ def knn_evaluate(train_reprs, train_labels, test_reprs, test_labels, k_values=[5
     Compute kNN accuracy for multiple k values.
     No model fitting — purely distance-based.
     """
+    # Sanitize NaN/Inf
+    train_reprs = np.nan_to_num(train_reprs.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+    test_reprs = np.nan_to_num(test_reprs.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+
     scaler = StandardScaler()
     tr_s = scaler.fit_transform(train_reprs)
     te_s = scaler.transform(test_reprs)
@@ -180,20 +184,23 @@ def compute_detection_rate(in_scores, ood_scores, specificity=0.95):
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-CHECKPOINTS = {
-    'PA-HybridSSL (ResNet1D)': ('remote/ssl_passl_resnet_hybrid/best_checkpoint.pth', 'resnet1d'),
-    'SimCLR + Naive Aug':      ('remote/ssl_simclr_naive_resnet/best_checkpoint.pth', 'resnet1d'),
-}
-
-
 def main():
     parser = argparse.ArgumentParser(description='kNN evaluation + OOD detection comparison')
     parser.add_argument('--ptbxl_csv', type=str, default='data/ptbxl_processed.csv')
     parser.add_argument('--chapman_csv', type=str, default='data/chapman_processed.csv')
+    parser.add_argument('--passl_checkpoint', type=str, required=True,
+                        help='Path to PA-HybridSSL best_checkpoint.pth')
+    parser.add_argument('--simclr_checkpoint', type=str, required=True,
+                        help='Path to SimCLR Naive best_checkpoint.pth')
     parser.add_argument('--output_dir', type=str, default='results/knn_ood_eval')
     parser.add_argument('--seeds', type=int, nargs='+', default=[42, 7, 123])
     parser.add_argument('--max_samples', type=int, default=30000)
     args = parser.parse_args()
+
+    CHECKPOINTS = {
+        'PA-HybridSSL (ResNet1D)': (args.passl_checkpoint, 'resnet1d'),
+        'SimCLR + Naive Aug':      (args.simclr_checkpoint, 'resnet1d'),
+    }
 
     os.makedirs(args.output_dir, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
