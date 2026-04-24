@@ -138,7 +138,7 @@ General-purpose SSL methods for time series have evolved rapidly. \textbf{TS-TCC
 
 \subsection{ECG-Specific Contrastive Learning}
 
-\textbf{CLOCS}~\cite{Kiyasseh2021clocs} pioneered temporal contrastive learning for ECG by treating spatially and temporally adjacent segments as positive pairs. However, CLOCS uses generic SimCLR augmentations without physiological constraints. \textbf{3KG}~\cite{Gopal2021ecg3kg} introduces a physiologically inspired approach by leveraging the spatiotemporal characteristics of multi-lead ECGs to generate positive views. More recently, several works have recognized the need for physiological priors in SSL. \textbf{PhysioCLR}~\cite{physioclr2025} explicitly integrates domain-specific cues with a hybrid contrastive-reconstructive loss. \textbf{ACL-ECG}~\cite{aclecg2026} designs rhythm-preserving augmentations such as cardiac-cycle cropping. \textbf{CoRe-ECG}~\cite{coreecg2026} combines contrastive and reconstruction losses with spatio-temporal masking. \textbf{PatchECG}~\cite{patchecg2026} demonstrated massive scale (85M parameters) pretraining on over 8 million signals.
+\textbf{CLOCS}~\cite{Kiyasseh2021clocs} pioneered temporal contrastive learning for ECG by treating spatially and temporally adjacent segments as positive pairs. However, CLOCS uses generic SimCLR augmentations without physiological constraints. \textbf{3KG}~\cite{Gopal2021ecg3kg} introduces a physiologically inspired approach by leveraging the spatiotemporal characteristics of multi-lead ECGs to generate positive views. More recently, several works have recognized the need for physiological priors in SSL. \textbf{PhysioCLR}~\cite{physioclr2025} integrates ECG physiological similarity cues (RR interval, HRV, peak counts) into contrastive pair selection with a hybrid contrastive-reconstructive loss, boosting mean AUROC by 12\% over strong baselines. \textbf{ACL-ECG}~\cite{aclecg2026} groups ECG leads into anatomical regions (anterior, inferior, septal, lateral) with region-aware contrastive objectives and cardiac-cycle masking augmentations. \textbf{CoRe-ECG}~\cite{coreecg2026} combines contrastive and reconstructive losses with spatio-temporal dual masking to break shortcut correlations across leads. \textbf{PatchECG}~\cite{patchecg2024} demonstrated large-scale pretraining on $\sim$8.2~million unlabeled ECG signals using masked patch modeling with a 1D Transformer.
 
 While these works have demonstrated that physiology-aware augmentations and hybrid objectives are beneficial, our work differs by providing a \textit{controlled architectural benchmarking study}. We rigorously compare CNN vs. Kolmogorov-Arnold Network (KAN) encoders, validate exact QRS preservation bounds, and document behavior across a massive 1.2M-beat corpus with explicit scaling laws and zero-leakage cross-dataset transfer.
 
@@ -941,16 +941,16 @@ M.~Caron \etal, ``Emerging properties in self-supervised vision transformers,'' 
 M.~Assran \etal, ``Self-supervised learning from images with a joint-embedding predictive architecture,'' in \textit{Proc. CVPR}, 2023.
 
 \bibitem{physioclr2025}
-Y.~Hu \etal, ``PhysioCLR: Physiologically informed contrastive learning for ECG representation,'' in \textit{Proc. AAAI}, 2025.
+T.~Abboud~\etal, ``Domain knowledge is power: Leveraging physiological priors for self-supervised representation learning in electrocardiography (PhysioCLR),'' \textit{arXiv preprint arXiv:2509.08116}, 2025.
 
 \bibitem{aclecg2026}
-R.~Chen \etal, ``ACL-ECG: Augmentation-constrained contrastive learning for electrocardiogram,'' in \textit{Proc. ICLR}, 2026.
+W.~Liu, Z.~Wu, and Z.~Yuan, ``ACL-ECG: Anatomy-aware contrastive learning for multi-lead electrocardiograms,'' \textit{Sensors}, vol.~26, no.~3, p.~1077, 2026.
 
 \bibitem{coreecg2026}
-L.~Wang \etal, ``CoRe-ECG: Contrastive-reconstructive pretraining for multi-lead ECG,'' in \textit{Proc. MICCAI}, 2026.
+J.~Zhang~\etal, ``CoRe-ECG: Advancing self-supervised representation learning for 12-lead ECG via contrastive and reconstructive synergy,'' \textit{arXiv preprint arXiv:2604.11359}, 2026.
 
-\bibitem{patchecg2026}
-S.~Liu \etal, ``PatchECG: Large-scale ECG foundation model with patch-based masked autoencoders,'' \textit{npj Digital Medicine}, 2026.
+\bibitem{patchecg2024}
+S.~Liu~\etal, ``PatchECG: Large-scale ECG foundation model with patch-based masked modeling,'' \textit{arXiv preprint}, 2024.
 
 \bibitem{TFMAD2025}
 Y.~Zhang \etal, ``Time-frequency specific waveform mask feature fusion for ECG anomaly detection,'' \textit{IEEE Trans. Instrum. Meas.}, vol.~74, pp.~1--12, 2025.
