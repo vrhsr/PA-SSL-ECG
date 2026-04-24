@@ -541,12 +541,16 @@ To verify that the encoder focuses on clinically relevant ECG regions rather tha
 
 \subsection{ECG Reconstruction: Random MAE vs.\ PA-MAE}
 
-Figure~\ref{fig:reconstruction} visualizes the effect of QRS-avoidance masking. Under random masking, the decoder is frequently forced to reconstruct the QRS complex from scratch, leading to hallucinated or averaged-case peaks (Row 3, Column 2). Under PA-MAE, the QRS is always visible to the encoder, and the decoder instead reconstructs P and T waves --- forcing it to learn electrophysiological correlations between cardiac phases.
+Figure~\ref{fig:reconstruction} provides visual and empirical evidence of the physiological necessity of QRS-avoidance masking. We compare reconstructions from a standard MAE trained with 60\% uniform random masking (baseline) against our PA-MAE trained with 60\% QRS-aware masking (ours) across three representative PTB-XL test-set samples. 
+
+As shown in Column 2, when uniform random masking obscures the QRS complex, the baseline MAE fails to preserve patient-specific morphology. For Sample 2 (Normal), the baseline incorrectly inverts the QRS polarity, reconstructing a negative deflection where a positive R-wave exists. More critically, for Sample 3 (Abnormal), the baseline entirely misses the high-amplitude pathological spike, hallucinating an average-case low-amplitude peak instead (QRS RMSE = 1.126). 
+
+Conversely, PA-MAE (Column 3) strictly preserves the QRS region (pink shading) as visible context for the encoder. Forced to reconstruct the masked P-waves, T-waves, and baseline segments, the PA-MAE decoder successfully infers the electrophysiological correlations of the cardiac cycle, seamlessly bridging the signal without distorting the critical depolarization phase. Across all samples, PA-MAE achieves consistently lower QRS RMSE, confirming that the physiological prior prevents the model from discarding high-frequency morphological identifiers.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/reconstruction_comparison.png}
-\caption{Reconstruction comparison: Random MAE vs.\ PA-MAE on three representative ECG beats (Normal, Wide-QRS Abnormal, Borderline ST). Red shading marks the QRS region. In Random MAE, QRS is frequently masked and reconstructed inaccurately (hallucinated peak amplitude). PA-MAE always exposes the QRS to the encoder; the decoder reconstructs P/T waves, learning electrophysiological correlations. The reconstruction overlay (Column 4) shows PA-MAE tracks the original signal more faithfully.}
+\includegraphics[width=\textwidth]{figures/fig3_reconstruction_comparison.pdf}
+\caption{ECG Reconstruction at 60\% mask ratio: Random-MAE vs.\ PA-MAE. Red shading denotes the QRS region. \textbf{Random-MAE (Center):} Uniform random masking frequently obscures the QRS complex, causing the decoder to hallucinate average-case morphologies (e.g., incorrect polarity in Sample 2, missing the high-amplitude pathological spike in Sample 3). \textbf{PA-MAE (Right):} By strictly avoiding QRS masking, PA-MAE ensures the encoder learns the exact patient-specific morphology, forcing the network to model physiological correlations (P/T waves) rather than guessing the QRS peak.}
 \label{fig:reconstruction}
 \end{figure*}
 
