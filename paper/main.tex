@@ -418,15 +418,17 @@ The Mahalanobis anomaly scorer, trained on normal PTB-XL representations, detect
 
 \begin{table}[h]
 \centering
-\caption{OOD detection: PTB-XL (normal, in-distribution) vs.\ Chapman-Shaoxing (abnormal, OOD). AUROC and DR@95\% averaged over 3 seeds.}
+\caption{OOD detection comparison: PTB-XL (in-distribution) vs.\ Chapman-Shaoxing (OOD). AUROC and detection rate at 95\% specificity (DR@95\%), mean over 3 seeds.}
 \label{tab:ood}
 \resizebox{\columnwidth}{!}{%
+\small
 \begin{tabular}{lcccccc}
 \toprule
  & \multicolumn{2}{c}{\textbf{Mahalanobis}} & \multicolumn{2}{c}{\textbf{Euclidean}} & \multicolumn{2}{c}{\textbf{kNN ($k$=5)}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
 \textbf{Method} & AUROC & DR@95\% & AUROC & DR@95\% & AUROC & DR@95\% \\
 \midrule
-PA-HybridSSL & $\mathbf{0.848}$ & $\mathbf{0.582}$ & $\mathbf{0.805}$ & $\mathbf{0.489}$ & $0.851$ & $0.573$ \\
+PA-HybridSSL   & $\mathbf{0.848}$ & $\mathbf{0.582}$ & $\mathbf{0.805}$ & $\mathbf{0.489}$ & $0.851$ & $0.573$ \\
 SimCLR + Naive & $0.881$ & $0.497$ & $0.675$ & $0.129$ & $\mathbf{0.918}$ & $\mathbf{0.700}$ \\
 \bottomrule
 \end{tabular}%
