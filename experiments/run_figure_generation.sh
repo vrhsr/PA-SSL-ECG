@@ -62,24 +62,20 @@ elapsed() {
 }
 
 # ── Introspect accepted CLI args for a module ──────────────────────────────────
-# Usage: accepted_args "src.reconstruction_viz"
-# Returns newline-separated list of --flag names the module declares
 accepted_args() {
     local module="$1"
     $PYTHON - "$module" <<'PYEOF'
-import sys, argparse, importlib, types
+import sys, argparse, importlib
 
 module_name = sys.argv[1]
 mod = importlib.import_module(module_name)
 
-# Walk the module looking for an ArgumentParser
 parser = None
 for attr in vars(mod).values():
     if isinstance(attr, argparse.ArgumentParser):
         parser = attr
         break
 
-# Fallback: call build_parser / get_parser if present
 if parser is None:
     for fn_name in ('build_parser', 'get_parser', 'make_parser'):
         fn = getattr(mod, fn_name, None)
@@ -88,7 +84,6 @@ if parser is None:
             break
 
 if parser is None:
-    # Last resort: import __main__ block via parse_known_args trick
     sys.exit(0)
 
 for action in parser._actions:
@@ -99,13 +94,10 @@ PYEOF
 }
 
 # ── Safe module runner ─────────────────────────────────────────────────────────
-# Strips any --flag that the target module does not declare, then runs it.
-# Usage: safe_run_module <module> [--flag value ...]
 safe_run_module() {
     local module="$1"; shift
     local -a raw_args=("$@")
 
-    # Collect flags the module actually accepts
     local accepted
     accepted=$( accepted_args "$module" 2>/dev/null ) || accepted=""
 
@@ -115,10 +107,8 @@ safe_run_module() {
         local tok="${raw_args[$i]}"
         if [[ "$tok" == --* ]]; then
             local key="${tok#--}"
-            # Check if accepted (grep -qx for exact line match)
             if echo "$accepted" | grep -qx "$key" 2>/dev/null || [[ -z "$accepted" ]]; then
                 filtered_args+=("$tok")
-                # Peek at next token: if it doesn't start with -- it's the value
                 local next_i=$(( i + 1 ))
                 if (( next_i < ${#raw_args[@]} )) && \
                    [[ "${raw_args[$next_i]}" != --* ]]; then
@@ -127,7 +117,6 @@ safe_run_module() {
                 fi
             else
                 warn "Skipping unsupported arg: ${tok}  (not declared by ${module})"
-                # Skip value token too if present
                 local next_i=$(( i + 1 ))
                 if (( next_i < ${#raw_args[@]} )) && \
                    [[ "${raw_args[$next_i]}" != --* ]]; then
@@ -191,7 +180,6 @@ preflight() {
         fi
     done
 
-    # Hard requirement: PA-SSL checkpoint needed for Figs 3 & 5
     if [[ ! -f "$PASSL_CKPT" ]]; then
         fail "PA-HybridSSL checkpoint required for Figs 3 & 5 — aborting"
         exit 1
@@ -241,14 +229,66 @@ figure_reconstruction() {
     info "Expected runtime: ~2 min"
     hr "·"
 
-    # Core flags that reconstruction_viz.py is known to support.
-    # safe_run_module will silently drop any that the script does not declare.
     run_timed "fig3_reconstruction" \
         safe_run_module src.reconstruction_viz \
             --checkpoint  "$PASSL_CKPT" \
             --data_csv    "$DATA_CSV"   \
             --output_dir  "$OUT_DIR"    \
             --mask_ratio  0.60
+
+    # ── Guarantee the output lands in $OUT_DIR with the canonical name ────────
+    # reconstruction_viz.py may write to cwd, to output_dir with its own name,
+    # or to a results/ subfolder — search all three and copy to the right place.
+    step "Locating Fig 3 output and copying to $OUT_DIR"
+
+    local canonical="$OUT_DIR/fig3_reconstruction_comparison.png"
+    local found=false
+
+    # Candidate names the module might produce
+    local -a candidates=(
+        "$OUT_DIR/reconstruction_comparison.png"
+        "$OUT_DIR/fig3_reconstruction_comparison.png"
+        "reconstruction_comparison.png"
+        "results/reconstruction_comparison.png"
+    )
+
+    # Also do a broader glob search under common dirs
+    local -a glob_hits
+    mapfile -t glob_hits < <(
+        find "$OUT_DIR" . results/ -maxdepth 2 \
+             -name "*reconstruction*" -name "*.png" 2>/dev/null | sort -u
+    )
+
+    for f in "${candidates[@]}" "${glob_hits[@]}"; do
+        if [[ -f "$f" ]]; then
+            if [[ "$f" != "$canonical" ]]; then
+                cp "$f" "$canonical"
+                info "Copied: $f  →  $canonical"
+            fi
+            # Also produce PDF via Python (one-liner convert)
+            $PYTHON -c "
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib.image import imread
+import matplotlib.pyplot as plt, os
+img = imread('$canonical')
+fig, ax = plt.subplots(figsize=(img.shape[1]/300, img.shape[0]/300))
+ax.imshow(img); ax.axis('off')
+plt.savefig('${canonical%.png}.pdf', dpi=300, bbox_inches='tight')
+plt.close()
+print('  PDF written: ${canonical%.png}.pdf')
+" 2>/dev/null || true
+            found=true
+            break
+        fi
+    done
+
+    if [[ "$found" == false ]]; then
+        warn "Could not locate reconstruction output — check log for the path written by reconstruction_viz.py"
+        warn "Run:  find ~ -name '*reconstruction*' -newer '$LOG_DIR' 2>/dev/null"
+    else
+        ok "Fig 3 confirmed at: $canonical"
+    fi
 
     ok "Outputs:"
     info "  $OUT_DIR/fig3_reconstruction_comparison.{png,pdf}"
@@ -473,6 +513,7 @@ from scipy.interpolate        import interp1d
 from src.models.encoder       import build_encoder
 from src.data.ecg_dataset     import patient_aware_split
 
+# ── Style ─────────────────────────────────────────────────────────────────────
 plt.rcParams.update({
     'font.family':       'DejaVu Serif',
     'font.size':         10,
@@ -501,6 +542,7 @@ COL_COLORS = {'PA-HybridSSL (Ours)': '#2166AC', 'SimCLR (Contrastive)': '#D6604D
 CMAP = 'RdYlBu_r'
 FS   = 500
 
+# ── Encoder ───────────────────────────────────────────────────────────────────
 def load_encoder(ckpt_path):
     ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
     cfg  = ckpt.get('config', {})
@@ -513,6 +555,7 @@ def load_encoder(ckpt_path):
     enc.load_state_dict(sd, strict=False)
     return enc.to(DEVICE).eval()
 
+# ── GradCAM ───────────────────────────────────────────────────────────────────
 def gradcam_1d(encoder, signal_np):
     x = torch.tensor(signal_np, dtype=torch.float32,
                      device=DEVICE).unsqueeze(0).unsqueeze(0)
@@ -553,6 +596,7 @@ def gradcam_1d(encoder, signal_np):
     t_sig = np.linspace(0, 1, signal_np.shape[-1])
     return interp1d(t_cam, cam, kind='linear')(t_sig)
 
+# ── Data ──────────────────────────────────────────────────────────────────────
 print('  Loading PTB-XL test split...')
 _, _, test_df = patient_aware_split('data/ptbxl_processed.csv')
 sig_cols = [c for c in test_df.columns if str(c).isdigit()]
@@ -578,85 +622,184 @@ for name, ckpt in CKPTS.items():
     print(f'  Loading encoder: {name}')
     encoders[name] = load_encoder(ckpt)
 
-N_ROWS = len(BEAT_META)
-N_COLS = len(CKPTS)
-fig = plt.figure(figsize=(14, 10.5))
+# ── Layout ────────────────────────────────────────────────────────────────────
+# Each ECG row gets TWO sub-rows in GridSpec:
+#   sub-row 0  → thin header bar  (title + QRS saliency badge)  height ratio 1
+#   sub-row 1  → signal panel                                    height ratio 5
+# This keeps ALL text strictly above the waveform.
+
+N_BEATS = len(BEAT_META)
+N_COLS  = len(CKPTS)
+
+# Build alternating height ratios  [1, 5, 1, 5, ...]
+hr_ratios = []
+for _ in range(N_BEATS):
+    hr_ratios += [1, 5]
+
+fig = plt.figure(figsize=(15, 12))
 outer_gs = gridspec.GridSpec(
-    N_ROWS, N_COLS, figure=fig,
-    hspace=0.55, wspace=0.25,
-    left=0.07, right=0.88, top=0.91, bottom=0.07,
+    N_BEATS * 2, N_COLS,
+    figure=fig,
+    height_ratios=hr_ratios,
+    hspace=0.08,          # tight within each beat pair
+    wspace=0.22,
+    left=0.08, right=0.88,
+    top=0.92,  bottom=0.06,
 )
+
+# Extra vertical breathing room between beat groups
+# (achieved by a slightly larger hspace override per beat boundary —
+#  done via subplot_params; simplest approach is to leave hspace slightly
+#  larger and compensate with the header row height ratio)
 
 norm = Normalize(vmin=0, vmax=1)
 t_ms = np.arange(signals.shape[1]) / FS * 1000
+
 QRS_CENTER_MS = 250
 QRS_HALF_MS   = 40
 
-for row, (bidx, beat_label, beat_desc) in enumerate(BEAT_META):
-    sig = signals[bidx]
-    for col, (enc_name, encoder) in enumerate(encoders.items()):
-        cam = gradcam_1d(encoder, sig)
-        ax  = fig.add_subplot(outer_gs[row, col])
+enc_names = list(encoders.keys())
 
+for beat_idx, (bidx, beat_label, beat_desc) in enumerate(BEAT_META):
+    sig     = signals[bidx]
+    hdr_row = beat_idx * 2       # thin header row index in GridSpec
+    sig_row = beat_idx * 2 + 1   # signal row index in GridSpec
+
+    # Pre-compute saliency for both encoders so header can show both values
+    cams = {name: gradcam_1d(enc, sig) for name, enc in encoders.items()}
+
+    qrs_lo   = QRS_CENTER_MS - QRS_HALF_MS
+    qrs_hi   = QRS_CENTER_MS + QRS_HALF_MS
+    t_mask   = (t_ms >= qrs_lo) & (t_ms <= qrs_hi)
+
+    for col_idx, enc_name in enumerate(enc_names):
+        cam     = cams[enc_name]
+        col_col = COL_COLORS[enc_name]
+
+        # ── Header axis ───────────────────────────────────────────────────────
+        ax_hdr = fig.add_subplot(outer_gs[hdr_row, col_idx])
+        ax_hdr.set_axis_off()          # purely a text canvas
+
+        # QRS saliency badge — centred, never touches signal
+        qrs_sal = cam[t_mask].mean() if t_mask.any() else 0.0
+        badge_color = '#1a6b1a' if qrs_sal >= 0.4 else \
+                      '#8B6914' if qrs_sal >= 0.2 else '#7a1a1a'
+
+        ax_hdr.text(
+            0.98, 0.5,
+            f'QRS saliency: {qrs_sal:.2f}',
+            transform=ax_hdr.transAxes,
+            fontsize=8, ha='right', va='center',
+            color='white',
+            bbox=dict(
+                boxstyle='round,pad=0.35',
+                facecolor=badge_color,
+                edgecolor='none',
+                alpha=0.88,
+            ),
+        )
+
+        # Beat label on left column only
+        if col_idx == 0:
+            ax_hdr.text(
+                0.0, 0.5,
+                f'{beat_label} — {beat_desc}',
+                transform=ax_hdr.transAxes,
+                fontsize=9, fontweight='bold',
+                ha='left', va='center', color='#333333',
+            )
+
+        # ── Signal axis ───────────────────────────────────────────────────────
+        ax = fig.add_subplot(outer_gs[sig_row, col_idx])
+
+        # Coloured waveform via LineCollection
         pts  = np.column_stack([t_ms, sig])
         segs = np.stack([pts[:-1], pts[1:]], axis=1)
         lc   = LineCollection(segs, cmap=CMAP, norm=norm,
                               linewidth=2.0, zorder=4)
         lc.set_array(cam[:-1])
         ax.add_collection(lc)
-        ax.plot(t_ms, sig, color='#cccccc', lw=0.8, zorder=2, alpha=0.6)
 
-        qrs_lo = QRS_CENTER_MS - QRS_HALF_MS
-        qrs_hi = QRS_CENTER_MS + QRS_HALF_MS
+        # Faint grey reference trace
+        ax.plot(t_ms, sig, color='#cccccc', lw=0.8, zorder=2, alpha=0.55)
+
+        # QRS shaded region
         ax.axvspan(qrs_lo, qrs_hi, alpha=0.10, color='#FF4444', zorder=1)
-        ax.text(qrs_lo + 2, sig.max() + 0.04,
-                'QRS', fontsize=7, color='#CC0000', va='bottom')
 
-        for lbl_txt, x_pos in [('P', QRS_CENTER_MS - 90),
-                                ('T', QRS_CENTER_MS + 100)]:
-            ax.axvline(x_pos, color='#AAAAAA', lw=0.7, ls=':', zorder=1, alpha=0.7)
-            ax.text(x_pos + 2, sig.min() - 0.05,
-                    lbl_txt, fontsize=7, color='#888888')
+        # QRS label at TOP of span — positioned in axes-fraction coords
+        # so it sits just inside the top spine, never overlapping the signal
+        ax.text(
+            (qrs_lo + qrs_hi) / 2,        # x: centre of QRS window
+            1.0,                           # y: top of axes in data space
+            'QRS',
+            transform=ax.get_xaxis_transform(),   # x=data, y=axes [0,1]
+            fontsize=7, color='#CC0000',
+            ha='center', va='bottom',
+        )
 
-        qrs_mask = (t_ms >= qrs_lo) & (t_ms <= qrs_hi)
-        qrs_sal  = cam[qrs_mask].mean() if qrs_mask.any() else 0.0
-        ax.text(0.97, 0.95, f'QRS sal: {qrs_sal:.2f}',
-                transform=ax.transAxes, fontsize=7.5, ha='right', va='top',
-                bbox=dict(boxstyle='round,pad=0.3', fc='white',
-                          ec='#bbbbbb', alpha=0.85))
+        # P / T wave dashed markers
+        for wave_lbl, x_pos in [('P', QRS_CENTER_MS - 90),
+                                 ('T', QRS_CENTER_MS + 100)]:
+            ax.axvline(x_pos, color='#AAAAAA', lw=0.7,
+                       ls=':', zorder=1, alpha=0.7)
+            # Place wave label at bottom of axes frame, not in signal space
+            ax.text(
+                x_pos + 3, 0.02,
+                wave_lbl,
+                transform=ax.get_xaxis_transform(),
+                fontsize=7, color='#999999', va='bottom',
+            )
 
+        # Axis limits — no extra headroom needed (text is outside)
+        sig_range = sig.max() - sig.min()
+        pad       = sig_range * 0.08          # 8 % padding top and bottom
         ax.set_xlim(t_ms[0], t_ms[-1])
-        ax.set_ylim(sig.min() - 0.12, sig.max() + 0.12)
+        ax.set_ylim(sig.min() - pad, sig.max() + pad)
 
-        if row == 0:
+        # Column title on very first beat row only
+        if beat_idx == 0:
             ax.set_title(enc_name, fontsize=11, fontweight='bold',
-                         color=COL_COLORS[enc_name], pad=7)
-        if col == 0:
-            ax.set_ylabel(f'{beat_label}\n{beat_desc}', fontsize=9, labelpad=6)
-        if row == N_ROWS - 1:
+                         color=col_col, pad=4)
+
+        # Y-axis label on left column only
+        if col_idx == 0:
+            ax.set_ylabel('Amplitude (mV)', fontsize=8, labelpad=4)
+
+        # X-axis label on last beat row only
+        if beat_idx == N_BEATS - 1:
             ax.set_xlabel('Time (ms)', fontsize=9, labelpad=4)
         else:
             ax.set_xticklabels([])
 
-cbar_ax = fig.add_axes([0.905, 0.12, 0.018, 0.72])
+        ax.tick_params(labelsize=8)
+        for sp in ('top', 'right'):
+            ax.spines[sp].set_visible(False)
+
+# ── Shared colourbar ──────────────────────────────────────────────────────────
+cbar_ax = fig.add_axes([0.905, 0.10, 0.016, 0.74])
 sm = plt.cm.ScalarMappable(cmap=CMAP, norm=norm)
 sm.set_array([])
 cbar = fig.colorbar(sm, cax=cbar_ax)
 cbar.set_label('GradCAM Saliency', fontsize=10, labelpad=10)
 cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
-cbar.set_ticklabels(['0 (Low)', '0.25', '0.50', '0.75', '1 (High)'])
-cbar.ax.tick_params(labelsize=8.5)
+cbar.set_ticklabels(['0.00\n(Low)', '0.25', '0.50', '0.75', '1.00\n(High)'])
+cbar.ax.tick_params(labelsize=8)
 
+# ── Figure titles & caption ───────────────────────────────────────────────────
 fig.suptitle(
     'Figure 5 — GradCAM Encoder Saliency: PA-HybridSSL vs SimCLR',
-    fontsize=13, fontweight='bold', y=0.97)
+    fontsize=13, fontweight='bold', y=0.975,
+)
 fig.text(
-    0.5, 0.025,
-    'Colour encodes relative attention (cool = low, warm = high).  '
-    'Grey shading = QRS complex.  Dashed lines = P / T wave markers.  '
-    'PTB-XL dataset, 500 Hz, lead II.',
-    ha='center', fontsize=8, color='#555555', style='italic')
+    0.5, 0.018,
+    'Colour encodes relative encoder attention (cool = low, warm = high).  '
+    'Pink shading = QRS complex.  Dashed verticals = P / T wave positions.  '
+    'PTB-XL dataset · 500 Hz · Lead II.  '
+    'Saliency badge colour: green ≥ 0.4 · amber ≥ 0.2 · red < 0.2.',
+    ha='center', fontsize=7.5, color='#555555', style='italic',
+)
 
+# ── Save ──────────────────────────────────────────────────────────────────────
 os.makedirs('results/paper_figures', exist_ok=True)
 for ext in ('png', 'pdf', 'svg'):
     out = f'results/paper_figures/fig5_gradcam_saliency.{ext}'
@@ -679,13 +822,13 @@ print_summary() {
     echo -e "  ${BOLD}Output directory:${RESET}  $OUT_DIR"
     echo ""
     hr
-    printf "  ${BOLD}%-44s %8s  %6s${RESET}\n" "File" "Size" "Format"
+    printf "  ${BOLD}%-48s %8s  %6s${RESET}\n" "File" "Size" "Format"
     hr
     for f in "$OUT_DIR"/*.png "$OUT_DIR"/*.pdf "$OUT_DIR"/*.svg; do
         [[ -f "$f" ]] || continue
         local size; size=$(du -h "$f" | cut -f1)
         local ext="${f##*.}"
-        printf "  %-44s %8s  %6s\n" "$(basename "$f")" "$size" "$ext"
+        printf "  %-48s %8s  %6s\n" "$(basename "$f")" "$size" "$ext"
     done
     echo ""
     echo -e "  ${BOLD}Total wall-clock time:${RESET}  ${GREEN}${total_time}${RESET}"
@@ -706,7 +849,7 @@ main() {
     echo ""
     echo -e "${BOLD}${BLUE}"
     echo "  ╔════════════════════════════════════════════════════════════════╗"
-    echo "  ║   PA-HybridSSL · Figure Generation Pipeline  v2.2            ║"
+    echo "  ║   PA-HybridSSL · Figure Generation Pipeline  v2.3            ║"
     echo "  ║   IEEE TBME Submission                                        ║"
     echo "  ╚════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
