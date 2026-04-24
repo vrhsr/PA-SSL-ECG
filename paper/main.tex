@@ -528,6 +528,28 @@ SimCLR + Naive Aug        & $0.750 \pm 0.010$ & $0.753 \pm 0.009$ & $0.762 \pm 0
 
 The supervised baseline yields $\text{ECE} = 0.064$ and Brier score $= 0.318$. PA-HybridSSL uses a Mahalanobis anomaly scorer whose class distances function as uncertainty proxies. While not probabilistically calibrated in the frequentist sense, Ledoit-Wolf regularized covariance estimation produces well-conditioned distance metrics indicative of anomaly severity. Formal probability calibration (\eg Platt scaling over the anomaly score) is reserved for future clinical deployment pipelines.
 
+\subsection{Encoder Saliency Analysis (GradCAM)}
+
+To verify that the encoder focuses on clinically relevant ECG regions rather than baseline or noise artefacts, we apply GradCAM~\cite{Selvaraju2017GradCAM} to compute per-sample saliency maps. GradCAM scores are computed as the ReLU-weighted sum of the gradient of the representation norm w.r.t.\ the final convolutional feature map, then upsampled to signal length.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/gradcam_passl_hybrid.png}
+\caption{GradCAM saliency maps for PA-HybridSSL (left) and SimCLR (right) across four representative ECG beats (2 Normal, 2 Abnormal). Colour encodes saliency (blue$\rightarrow$red = low$\rightarrow$high). The red shaded band marks the QRS complex. PA-HybridSSL consistently assigns high saliency to the QRS complex and ST-segment, confirming that QRS-preservation constraints guide the encoder toward morphologically meaningful features. SimCLR distributes attention more diffusely, including baseline segments.}
+\label{fig:gradcam}
+\end{figure*}
+
+\subsection{ECG Reconstruction: Random MAE vs.\ PA-MAE}
+
+Figure~\ref{fig:reconstruction} visualizes the effect of QRS-avoidance masking. Under random masking, the decoder is frequently forced to reconstruct the QRS complex from scratch, leading to hallucinated or averaged-case peaks (Row 3, Column 2). Under PA-MAE, the QRS is always visible to the encoder, and the decoder instead reconstructs P and T waves --- forcing it to learn electrophysiological correlations between cardiac phases.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/reconstruction_comparison.png}
+\caption{Reconstruction comparison: Random MAE vs.\ PA-MAE on three representative ECG beats (Normal, Wide-QRS Abnormal, Borderline ST). Red shading marks the QRS region. In Random MAE, QRS is frequently masked and reconstructed inaccurately (hallucinated peak amplitude). PA-MAE always exposes the QRS to the encoder; the decoder reconstructs P/T waves, learning electrophysiological correlations. The reconstruction overlay (Column 4) shows PA-MAE tracks the original signal more faithfully.}
+\label{fig:reconstruction}
+\end{figure*}
+
 
 \subsection{5-Class PTB-XL Superclass Evaluation}
 
@@ -629,6 +651,13 @@ These results exhibit log-linear growth in the pretraining regime (R²=0.836, 1K
 
 \section{Ablation Studies}
 \label{sec:ablation}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/training_convergence.png}
+\caption{Training convergence: loss (left) and validation AUROC (right) for three SSL objectives across 100 epochs on ResNet1D. The Hybrid objective converges to a lower loss and higher AUROC than either pure Contrastive or pure MAE training. The steeper early-phase loss reduction in Hybrid training reflects gradient stabilization from the dynamic warmup schedule: the MAE component dominates at epochs 1--20, providing dense gradient signal, while the contrastive component gradually increases its contribution thereafter.}
+\label{fig:convergence}
+\end{figure*}
 
 \subsection{Encoder $\times$ SSL Objective Factorial Ablation}
 
@@ -985,6 +1014,9 @@ Y.~Zhang \etal, ``Time-frequency specific waveform mask feature fusion for ECG a
 
 \bibitem{WavKAN2024}
 Z.~Bozic~\etal, ``WavKAN: Wavelet Kolmogorov-Arnold Networks for signal processing,'' \textit{arXiv:2405.12832}, 2024.
+
+\bibitem{Selvaraju2017GradCAM}
+R.~R.~Selvaraju, M.~Cogswell, A.~Das, R.~Vedantam, D.~Parikh, and D.~Batra, ``Grad-CAM: Visual explanations from deep networks via gradient-based localization,'' in \textit{Proc. IEEE ICCV}, pp.~618--626, 2017.
 
 \end{thebibliography}
 
