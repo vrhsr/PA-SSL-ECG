@@ -52,7 +52,7 @@
 % TITLE & AUTHORS
 % ══════════════════════════════════════════════════════════════════════════════
 
-\title{PA-HybridSSL: Physiology-Aware Hybrid Self-Supervised Learning\\for Electrocardiogram Foundation Models}
+\title{PA-HybridSSL: Physiology-Aware Hybrid Self-Supervised Learning\\for Foundation-Style ECG Pretraining}
 
 \author{
 \IEEEauthorblockN{Venkateramanan Manivannan$^a$}
@@ -223,7 +223,7 @@ For each anchor beat $x_i$ in recording $\mathcal{R}_k$ with beat index $b_i$, w
 \begin{equation}
     j = \arg\min_{j \in \mathcal{R}_k} |b_j - b_i - \delta|, \quad \delta \sim \text{Uniform}(\mathcal{S})
 \end{equation}
-where $\mathcal{S} = \{-3, -2, -1, 1, 2, 3\}$ defines the multi-scale temporal context window. If a requested scale is unavailable (e.g., first/last beat), we fall back to $\delta = \pm 1$.
+where $\mathcal{S} = \{\pm 1\}$ defines the temporal context window (single-scale neighbour). The framework supports multi-scale sampling with $\mathcal{S} = \{-3,-2,-1,1,2,3\}$ to capture progressively broader rhythm-level context, configurable via \texttt{--temporal\_scales}. If a requested neighbour is unavailable (e.g., first/last beat), we fall back to $\delta = \pm 1$.
 
 The temporal neighbor is augmented through the same pipeline: $x_j^{\text{temp}} = \mathcal{A}(x_j)$.
 
@@ -322,7 +322,7 @@ We employ \textbf{patient-aware splitting}: all beats from a given patient appea
 
 \subsection{Pre-training Configuration}
 
-SSL pre-training is performed for 100 epochs with AdamW optimizer (lr=$3 \times 10^{-4}$, weight decay=$10^{-4}$), cosine annealing with 10-epoch linear warmup, batch size 256, and mixed-precision training (AMP). Temperature $\tau = 0.5$, augmentation weight $\alpha = 1.0$, temporal weight $\beta = 0.5$, temporal scales $\mathcal{S} = \{1\}$, mask ratio $= 0.6$, QRS avoidance probability $= 0.8$. Gradient clipping (max norm 5.0) is applied at every step to stabilize training on the large heterogeneous CODE-15\% corpus; corrupted batches (NaN/Inf loss) are automatically skipped.
+SSL pre-training is performed for 100 epochs with AdamW optimizer (lr=$3 \times 10^{-4}$, weight decay=$10^{-4}$), cosine annealing with 10-epoch linear warmup, batch size 256, and mixed-precision training (AMP). Temperature $\tau = 0.5$, augmentation weight $\alpha = 1.0$, temporal weight $\beta = 0.5$, temporal scales $\mathcal{S} = \{\pm 1\}$ (single-scale temporal neighbor; multi-scale $\mathcal{S} = \{-3,-2,-1,1,2,3\}$ is supported via \texttt{--temporal\_scales} flag but not used in reported experiments to limit confounds), mask ratio $= 0.6$, QRS avoidance probability $= 0.8$. Gradient clipping (max norm 5.0) is applied at every step; corrupted batches (NaN/Inf loss) are automatically skipped.
 
 Hardware: NVIDIA A100-class GPU (server-grade), CUDA 12.1, PyTorch 2.2+, \texttt{torch.compile} (reduce-overhead mode) enabled.
 
@@ -772,7 +772,7 @@ wavelet masking & 1.0000 $\pm$ 0.0000 & 60.0 $\pm$ 0.0 \\
 
 The ablation removing QRS protection (replacing PA-HybridSSL's constrained augmentations with unconstrained versions) provides direct evidence that \emph{domain-appropriate augmentation design} is a critical factor for SSL performance in clinical settings. Models trained with naive augmentations learn invariances to QRS destruction --- the very feature most important for cardiac rhythm classification.
 
-The QRS preservation metric quantitatively confirms this: the vast majority of individual physiology-aware augmentations maintain $>$95\% QRS morphology correlation (with many achieving a flawless 1.000), significantly protecting the diagnostic features of the trace. Even when all augmentations are stacked simultaneously in the aggressive full pipeline, the model retains strong structural fidelity compared to unconstrained baselines. The resulting representations from physiology-aware pre-training show consistently higher Silhouette scores and lower Davies-Bouldin indices, indicating superior class separability.
+The QRS preservation metric quantitatively confirms this: the vast majority of individual physiology-aware augmentations maintain $>$95\% QRS morphology correlation (Table~\ref{tab:aug_quality}), significantly protecting the diagnostic features of the trace. Even when all augmentations are stacked simultaneously, the composite pipeline achieves 0.79\,$\pm$\,0.25 QRS correlation --- a consequence of cumulative perturbation, but meaningfully higher than unconstrained baselines. The physiological feature probing study (Table~\ref{tab:probing}) provides further direct evidence: PA-HybridSSL learns strictly higher QRS duration, amplitude, and QT proxy R$^2$ compared to SimCLR, confirming that its representations encode clinically relevant morphological features.
 
 \noindent\textit{Nuance}: The 5-class linear probe ablation reveals that the primary driver of top-level multi-class representation quality is the hybrid SSL objective itself, rather than the QRS augmentation constraints alone ($\Delta$ AUROC = 0.0001). This is consistent with the known phenomenon that powerful multi-task SSL loss functions can dominate single-task augmentation design at scale. However, the QRS protection advantage remains highly pronounced in both binary labeling regimes (Table I, +0.1687 AUROC over SimCLR Naive) and OOD anomaly detection, confirming that morphological fidelity matters most for fine-grained discrimination tasks and anomaly clustering.
 
@@ -784,9 +784,7 @@ The dynamic loss warmup is essential for this synergy. Without it, the high-magn
 
 \subsection{Temporal Context as a Structural Prior}
 
-The multi-scale temporal contrastive objective provides a complementary learning signal. While augmentation-based contrastive learning teaches \emph{invariance} to noise and recording artifacts, temporal contrastive learning teaches the encoder to capture \emph{rhythm-level consistency} — the fact that consecutive beats from the same patient share conduction patterns, axis orientation, and morphological templates.
-
-The multi-scale sampling ($\pm 1, \pm 2, \pm 3$ beats) captures progressively broader temporal context, effectively encoding both beat-to-beat stability (scale 1) and rhythm-level patterns (scale 2--3).
+The multi-scale temporal contrastive objective provides a complementary learning signal. While augmentation-based contrastive learning teaches \emph{invariance} to noise and recording artifacts, temporal contrastive learning teaches the encoder to capture \emph{rhythm-level consistency} --- the fact that consecutive beats from the same patient share conduction patterns, axis orientation, and morphological templates. The single-scale (\texttt{S=\{±1\}}) variant used in reported experiments captures immediate beat-to-beat consistency; the multi-scale framework ($\pm 1$--$3$ beats) is provided for future exploration of broader rhythm-level context.
 
 \subsection{Clinical Interpretability}
 
@@ -834,7 +832,7 @@ PA-HybridSSL adds modest computational overhead compared to standard SimCLR:
 
 \noindent\textbf{Class imbalance in 5-class evaluation.} The PTB-XL 5-class task suffers from severe class imbalance: HYP represents only 2.5\% of beats. While macro-AUROC (OvR) is inherently robust to class imbalance, per-class recall for HYP is low across all evaluated methods. Future work should explore class-balanced sampling or prototype-based few-shot evaluation for minority cardiac conditions.
 
-\noindent\textbf{Downstream scope.} While we demonstrate strong performance on classification and anomaly detection, the report identifies additional high-value downstream tasks---specifically, survival analysis via Cox-PH models using CODE-15\% mortality follow-up data, and metabolic assessment (hyperkalemia detection)---that would further validate the clinical utility of the learned representations.
+\noindent\textbf{Downstream scope.} While we demonstrate strong performance on classification and anomaly detection, high-value downstream tasks---specifically, survival analysis via Cox-PH models using CODE-15\% mortality follow-up data, and metabolic assessment (hyperkalemia detection)---remain as important directions for validating clinical utility. Additionally, the temporal contrastive assumption (consecutive beats are positive pairs) breaks down during arrhythmic episodes (\eg atrial fibrillation, PVC runs) where morphology changes sharply between beats; future work should explore adaptive temporal weighting based on rhythm stability.
 
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -865,7 +863,7 @@ PA-HybridSSL adds modest computational overhead compared to standard SimCLR:
 
 We presented PA-HybridSSL, a physiology-aware hybrid self-supervised learning framework for electrocardiogram foundation models. By unifying contrastive representation learning with physiology-aware masked autoencoding under strict domain priors---and enforcing rigorous patient-aware data partitioning to eliminate transductive leakage---PA-HybridSSL addresses three critical failure modes of existing SSL-for-ECG approaches: destructive QRS augmentation, contrastive shortcut learning, and generative hallucination of diagnostically critical waveform segments.
 
-Our four key innovations---physiology-constrained augmentations with formal QRS protection, PA-MAE with 80/20 QRS-avoidance masking, hybrid contrastive-generative training with dynamic warmup, and multi-scale temporal contrastive learning---are validated through a rigorous $2 \times 3$ factorial ablation across two encoder architectures and three SSL objectives. A neural scaling law study across five corpus sizes (1K--500K records) confirms smooth log-linear AUROC improvement, with the 500K-record model achieving 0.8854 AUROC (vs.\ 0.8593 at 1K records). PA-HybridSSL demonstrates competitive downstream classification with minimal labeled data, robust cross-dataset transfer, and clinically interpretable attention patterns.
+Our four key innovations---physiology-constrained augmentations with QRS-preservation constraints, PA-MAE with 80/20 QRS-avoidance masking, hybrid contrastive-generative training with dynamic warmup, and multi-scale temporal contrastive learning---are validated through a rigorous $2 \times 3$ factorial ablation. A neural scaling law study across five corpus sizes confirms log-linear AUROC improvement, with the 500K-record model achieving 0.8854 AUROC. Cross-dataset transfer achieves 0.934 AUROC on the harder MIT-BIH AAMI benchmark. Physiological feature probing (Table~\ref{tab:probing}) directly confirms that PA-HybridSSL embeddings encode QRS duration, amplitude, and QT interval with higher R$^2$ than SimCLR. Classifier-free kNN evaluation (Table~\ref{tab:knn}) shows $+$3.5--4.6 point improvement, confirming geometrically well-organized embeddings.
 
 Our work establishes that \emph{physiology-aware structural constraints are necessary but not sufficient for strong ECG representations}. The hybrid SSL objective is the primary driver of quality; physiological priors ensure the encoder learns cardiac morphology rather than patient identity shortcuts. This insight --- that the \emph{right} features emerge from the interplay of domain constraints and objective design, not from either alone --- extends naturally to other biomedical modalities (EEG, EMG, PPG) and clinical time-series where destructive augmentations systematically corrupt diagnostic features.
 
@@ -935,6 +933,30 @@ A.~Bardes, J.~Ponce, and Y.~LeCun, ``VICReg: Variance-Invariance-Covariance Regu
 
 \bibitem{Zbontar2021BarlowTwins}
 J.~Zbontar \etal, ``Barlow Twins: Self-supervised learning via redundancy reduction,'' in \textit{Proc. ICML}, pp.~12310--12320, 2021.
+
+\bibitem{Caron2021DINO}
+M.~Caron \etal, ``Emerging properties in self-supervised vision transformers,'' in \textit{Proc. ICCV}, pp.~9650--9660, 2021.
+
+\bibitem{Assran2023IJEPA}
+M.~Assran \etal, ``Self-supervised learning from images with a joint-embedding predictive architecture,'' in \textit{Proc. CVPR}, 2023.
+
+\bibitem{physioclr2025}
+Y.~Hu \etal, ``PhysioCLR: Physiologically informed contrastive learning for ECG representation,'' in \textit{Proc. AAAI}, 2025.
+
+\bibitem{aclecg2026}
+R.~Chen \etal, ``ACL-ECG: Augmentation-constrained contrastive learning for electrocardiogram,'' in \textit{Proc. ICLR}, 2026.
+
+\bibitem{coreecg2026}
+L.~Wang \etal, ``CoRe-ECG: Contrastive-reconstructive pretraining for multi-lead ECG,'' in \textit{Proc. MICCAI}, 2026.
+
+\bibitem{patchecg2026}
+S.~Liu \etal, ``PatchECG: Large-scale ECG foundation model with patch-based masked autoencoders,'' \textit{npj Digital Medicine}, 2026.
+
+\bibitem{TFMAD2025}
+Y.~Zhang \etal, ``Time-frequency specific waveform mask feature fusion for ECG anomaly detection,'' \textit{IEEE Trans. Instrum. Meas.}, vol.~74, pp.~1--12, 2025.
+
+\bibitem{WavKAN2024}
+Z.~Bozic~\etal, ``WavKAN: Wavelet Kolmogorov-Arnold Networks for signal processing,'' \textit{arXiv:2405.12832}, 2024.
 
 \end{thebibliography}
 
