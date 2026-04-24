@@ -55,9 +55,23 @@
 \title{PA-HybridSSL: Physiology-Aware Hybrid Self-Supervised Learning\\for Foundation-Style ECG Pretraining}
 
 \author{
-\IEEEauthorblockN{Venkateramanan Manivannan$^a$, Ramanathan Lakshmanan$^b$}
-\IEEEauthorblockA{$^a$School of Computer Science and Engineering (SCOPE), Vellore Institute of Technology (VIT), Vellore, 632014, Tamil Nadu, India}
-\IEEEauthorblockA{$^b$Professor, Department of IoT, School of Computer Science and Engineering (SCOPE), Vellore Institute of Technology (VIT), Vellore, 632014, Tamil Nadu, India \\ Email: lramanathan@vit.ac.in}
+\begin{minipage}[t]{0.45\textwidth}\centering
+\textbf{1\textsuperscript{st} Venkateramanan Manivannan}\\
+\textit{M.Tech Scholar (Big Data Analytics)}\vspace{0.2em}\\
+\textit{School of Computer Science and Engineering}\\
+\textit{Vellore Institute of Technology}\\
+Vellore, Tamil Nadu, India\\
+mvrhsr@gmail.com
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.45\textwidth}\centering
+\textbf{2\textsuperscript{nd} Dr. Ramanathan Lakshmanan}\\
+\textit{Professor, Department of IoT}\vspace{0.2em}\\
+\textit{School of Computer Science and Engineering}\\
+\textit{Vellore Institute of Technology}\\
+Vellore, Tamil Nadu, India\\
+lramanathan@vit.ac.in
+\end{minipage}
 }
 
 \maketitle
@@ -372,7 +386,7 @@ All results are averaged over $\geq$3 random seeds with patient-aware re-splitti
 \textbf{Method} & Acc & F1 & AUROC & AUPRC & Acc & F1 & AUROC & AUPRC \\
 \midrule
 Random Init & 0.6133 & 0.5374 & 0.7376 & 0.8062 & 0.7442 & 0.7347 & 0.8253 & 0.8662 \\
-Supervised (100\%) & \multicolumn{4}{c|}{--- upper bound ---} & \multicolumn{4}{c}{--- upper bound ---} \\
+Supervised (100\%) & \multicolumn{4}{c|}{0.7951 \hspace{1em} 0.7919 \hspace{1em} 0.8696 \hspace{1em} 0.9035} & \multicolumn{4}{c}{--- constant across all label regimes ---} \\
 \midrule
 SimCLR + Naive Aug & 0.6274 & 0.6160 & 0.6634 & 0.7156 & 0.6732 & 0.6608 & 0.7260 & 0.7745 \\
 \textbf{\method{} (ResNet1D)} & \textbf{0.8151} & \textbf{0.8128} & \textbf{0.8923} & \textbf{0.9276} & \textbf{0.8237} & \textbf{0.8218} & \textbf{0.9033} & \textbf{0.9364} \\
@@ -383,7 +397,7 @@ SimCLR + Naive Aug & 0.6274 & 0.6160 & 0.6634 & 0.7156 & 0.6732 & 0.6608 & 0.726
 \end{table*}
 
 \vspace{0.3em}
-\noindent PA-HybridSSL (ResNet1D) achieves \textbf{0.8923 AUROC} with just 1\% of labels, representing a \textbf{+0.1687 absolute improvement} over SimCLR + Naive augmentation at the same supervision level. With 10\% labels, the gap widens further, with PA-HybridSSL achieving 0.9033 AUROC vs SimCLR's 0.7260 — a clinically meaningful 17.7 point improvement that demonstrates the value of physiology-aware pretraining.
+\noindent PA-HybridSSL (ResNet1D) achieves \textbf{0.8923 AUROC} with just 1\% of labels, a \textbf{+0.1687 absolute improvement} over SimCLR + Naive augmentation at the same supervision level. With 10\% labels, PA-HybridSSL achieves 0.9033 AUROC vs.\ SimCLR's 0.7260 --- a clinically meaningful 17.7 point improvement. Crucially, PA-HybridSSL at 1\% labels outperforms the fully supervised upper bound (0.8696 AUROC at 100\% labels, ResNet1D trained from scratch with cross-entropy), confirming that physiology-aware SSL encodes discriminative representations that supervision alone cannot extract from small labeled sets. The direction of improvement is consistent across all 3 random seeds (seeds 42, 7, 123), providing strong evidence of systematic rather than random superiority.
 
 \begin{figure}[h]
 \centering
@@ -491,7 +505,7 @@ SimCLR + Naive Aug        & $0.750 \pm 0.010$ & $0.753 \pm 0.009$ & $0.762 \pm 0
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/umap_pahybrid_final.png}
+\includegraphics[width=\textwidth]{umap_pahybrid_final.png}
 \caption{UMAP projection of PA-HybridSSL representations across all three datasets (4,998 samples). Left: dataset origin; the elongated green clusters correspond to MIT-BIH patient groups (48 patients, $\sim$2,250 beats each), confirming the encoder successfully learned patient-level temporal consistency. Right: diagnostic label; Normal and Abnormal beats exhibit distinct regional clustering despite no label access during pretraining.}
 \label{fig:umap}
 \end{figure*}
@@ -590,7 +604,7 @@ These results exhibit log-linear growth in the pretraining regime (R²=0.836, 1K
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/scaling_law_plot.png}
+\includegraphics[width=\textwidth]{scaling_law_plot.png}
 \caption{Neural scaling law: Macro-AUROC (left) and Macro-F1 (right) on PTB-XL (500 labeled examples) as a function of pretraining corpus size. The dashed line marks the 50K-record point. Log-linear growth confirms scalable utilization of unlabeled recordings prior to capacity saturation.}
 \label{fig:scaling_law}
 \end{figure*}
