@@ -386,8 +386,8 @@ SimCLR + Naive Aug & 0.6274 & 0.6160 & 0.6634 & 0.7156 & 0.6732 & 0.6608 & 0.726
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=\columnwidth]{label_efficiency_chart.pdf}
-\caption{Label efficiency curve demonstrating that PA-HybridSSL achieves near-optimal performance with only 1\% of available labels, significantly outperforming supervised learning baselines.}
+\includegraphics[width=\columnwidth]{figures/label_efficiency_chart.pdf}
+\caption{Label efficiency: PA-HybridSSL AUROC vs.\ supervision fraction on PTB-XL (binary task), averaged over 3 seeds. PA-HybridSSL at 1\% labels outperforms SimCLR at 10\% labels.}
 \label{fig:label_eff}
 \end{figure}
 
@@ -490,7 +490,7 @@ SimCLR + Naive Aug        & $0.750 \pm 0.010$ & $0.753 \pm 0.009$ & $0.762 \pm 0
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{umap_pahybrid_final.png}
+\includegraphics[width=\textwidth]{figures/umap_pahybrid_final.png}
 \caption{UMAP projection of PA-HybridSSL representations across all three datasets (4,998 samples). Left: dataset origin; the elongated green clusters correspond to MIT-BIH patient groups (48 patients, $\sim$2,250 beats each), confirming the encoder successfully learned patient-level temporal consistency. Right: diagnostic label; Normal and Abnormal beats exhibit distinct regional clustering despite no label access during pretraining.}
 \label{fig:umap}
 \end{figure*}
