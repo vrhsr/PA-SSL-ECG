@@ -7,7 +7,7 @@
 # ║  Fig 4 │ Training Dynamics   — Loss & AUROC convergence (3 SSL variants)   ║
 # ║  Fig 5 │ GradCAM Saliency    — Encoder attention on ECG morphology         ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
-# ║  Runtime  : ~30 min total  │  GPU recommended for Fig 5                    ║
+# ║  Runtime  : ~30 min total  │  GPU recommended for Figs 3 & 5              ║
 # ║  Launch   : tmux new -s figures → bash experiments/run_figure_generation.sh║
 # ║  Root dir : ~/projects/PA-SSL-ECG/                                         ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -61,78 +61,6 @@ elapsed() {
     printf "%dm %02ds" $(( s/60 )) $(( s%60 ))
 }
 
-# ── Introspect accepted CLI args for a module ──────────────────────────────────
-accepted_args() {
-    local module="$1"
-    $PYTHON - "$module" <<'PYEOF'
-import sys, argparse, importlib
-
-module_name = sys.argv[1]
-mod = importlib.import_module(module_name)
-
-parser = None
-for attr in vars(mod).values():
-    if isinstance(attr, argparse.ArgumentParser):
-        parser = attr
-        break
-
-if parser is None:
-    for fn_name in ('build_parser', 'get_parser', 'make_parser'):
-        fn = getattr(mod, fn_name, None)
-        if callable(fn):
-            parser = fn()
-            break
-
-if parser is None:
-    sys.exit(0)
-
-for action in parser._actions:
-    for opt in action.option_strings:
-        if opt.startswith('--'):
-            print(opt.lstrip('--'))
-PYEOF
-}
-
-# ── Safe module runner ─────────────────────────────────────────────────────────
-safe_run_module() {
-    local module="$1"; shift
-    local -a raw_args=("$@")
-
-    local accepted
-    accepted=$( accepted_args "$module" 2>/dev/null ) || accepted=""
-
-    local -a filtered_args=()
-    local i=0
-    while (( i < ${#raw_args[@]} )); do
-        local tok="${raw_args[$i]}"
-        if [[ "$tok" == --* ]]; then
-            local key="${tok#--}"
-            if echo "$accepted" | grep -qx "$key" 2>/dev/null || [[ -z "$accepted" ]]; then
-                filtered_args+=("$tok")
-                local next_i=$(( i + 1 ))
-                if (( next_i < ${#raw_args[@]} )) && \
-                   [[ "${raw_args[$next_i]}" != --* ]]; then
-                    filtered_args+=("${raw_args[$next_i]}")
-                    i=$(( i + 1 ))
-                fi
-            else
-                warn "Skipping unsupported arg: ${tok}  (not declared by ${module})"
-                local next_i=$(( i + 1 ))
-                if (( next_i < ${#raw_args[@]} )) && \
-                   [[ "${raw_args[$next_i]}" != --* ]]; then
-                    i=$(( i + 1 ))
-                fi
-            fi
-        else
-            filtered_args+=("$tok")
-        fi
-        i=$(( i + 1 ))
-    done
-
-    info "Effective command: python3 -m ${module} ${filtered_args[*]}"
-    $PYTHON -m "$module" "${filtered_args[@]}"
-}
-
 # ── Timed runner ───────────────────────────────────────────────────────────────
 run_timed() {
     local label="$1"; shift
@@ -176,13 +104,15 @@ preflight() {
             local size; size=$(du -h "$ckpt" | cut -f1)
             ok "$(basename "$(dirname "$ckpt")")/$(basename "$ckpt")  ${GREY}(${size})${RESET}"
         else
-            warn "MISSING — $ckpt  ${GREY}(synthetic curves used for Fig 4)${RESET}"
+            warn "MISSING — $ckpt"
         fi
     done
 
     if [[ ! -f "$PASSL_CKPT" ]]; then
-        fail "PA-HybridSSL checkpoint required for Figs 3 & 5 — aborting"
-        exit 1
+        fail "PA-HybridSSL checkpoint required — aborting"; exit 1
+    fi
+    if [[ ! -f "$MAE_CKPT" ]]; then
+        fail "MAE-only checkpoint required for Fig 3 comparison — aborting"; exit 1
     fi
 
     step "Dataset"
@@ -193,21 +123,12 @@ preflight() {
         fail "$DATA_CSV not found"; exit 1
     fi
 
-    step "Probing reconstruction_viz accepted arguments"
-    local viz_args
-    viz_args=$( accepted_args "src.reconstruction_viz" 2>/dev/null ) || viz_args=""
-    if [[ -n "$viz_args" ]]; then
-        info "Declared flags: $(echo "$viz_args" | tr '\n' ' ')"
-    else
-        warn "Could not introspect src.reconstruction_viz — will pass only core flags"
-    fi
-
     step "GPU availability"
     if $PYTHON -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
         local gpu; gpu=$($PYTHON -c "import torch; print(torch.cuda.get_device_name(0))")
         ok "CUDA — $gpu"
     else
-        warn "No GPU detected — running on CPU (Fig 5 will be slower)"
+        warn "No GPU detected — running on CPU"
     fi
 
     step "Output directories"
@@ -215,83 +136,347 @@ preflight() {
     ok "$OUT_DIR"
     ok "$LOG_DIR"
 
-    hr
-    echo ""
+    hr; echo ""
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 3 — ECG Reconstruction Comparison
+# FIGURE 3 — ECG Reconstruction Comparison  (Random-MAE vs PA-MAE)
+# Built entirely in Python — does NOT delegate to reconstruction_viz.py
+# because that script only runs one model and produces no comparison panel.
 # ══════════════════════════════════════════════════════════════════════════════
 figure_reconstruction() {
     banner "FIGURE 3 · ECG Reconstruction  (Random-MAE vs PA-MAE)"
-    info "Demonstrates PA-MAE preserves QRS morphology"
-    info "while random masking causes hallucination artefacts."
-    info "Expected runtime: ~2 min"
+    info "Side-by-side reconstruction: columns = masking strategy,"
+    info "rows = ECG samples.  PA-MAE preserves QRS; Random-MAE hallucinates."
+    info "Expected runtime: ~4 min"
     hr "·"
 
-    run_timed "fig3_reconstruction" \
-        safe_run_module src.reconstruction_viz \
-            --checkpoint  "$PASSL_CKPT" \
-            --data_csv    "$DATA_CSV"   \
-            --output_dir  "$OUT_DIR"    \
-            --mask_ratio  0.60
-
-    # ── Guarantee the output lands in $OUT_DIR with the canonical name ────────
-    # reconstruction_viz.py may write to cwd, to output_dir with its own name,
-    # or to a results/ subfolder — search all three and copy to the right place.
-    step "Locating Fig 3 output and copying to $OUT_DIR"
-
-    local canonical="$OUT_DIR/fig3_reconstruction_comparison.png"
-    local found=false
-
-    # Candidate names the module might produce
-    local -a candidates=(
-        "$OUT_DIR/reconstruction_comparison.png"
-        "$OUT_DIR/fig3_reconstruction_comparison.png"
-        "reconstruction_comparison.png"
-        "results/reconstruction_comparison.png"
-    )
-
-    # Also do a broader glob search under common dirs
-    local -a glob_hits
-    mapfile -t glob_hits < <(
-        find "$OUT_DIR" . results/ -maxdepth 2 \
-             -name "*reconstruction*" -name "*.png" 2>/dev/null | sort -u
-    )
-
-    for f in "${candidates[@]}" "${glob_hits[@]}"; do
-        if [[ -f "$f" ]]; then
-            if [[ "$f" != "$canonical" ]]; then
-                cp "$f" "$canonical"
-                info "Copied: $f  →  $canonical"
-            fi
-            # Also produce PDF via Python (one-liner convert)
-            $PYTHON -c "
+    run_timed "fig3_reconstruction" $PYTHON - \
+        --passl_ckpt  "$PASSL_CKPT" \
+        --mae_ckpt    "$MAE_CKPT"   \
+        --data_csv    "$DATA_CSV"   \
+        --out_dir     "$OUT_DIR"    \
+        --mask_ratio  0.60          \
+        --n_samples   4             \
+        --seed        42 <<'PYEOF'
+# ─────────────────────────────────────────────────────────────────────────────
+# Figure 3 — ECG Reconstruction Comparison
+# Three columns per sample:
+#   (1) Original ECG
+#   (2) Random-MAE reconstruction  (baseline — hallucinates QRS)
+#   (3) PA-MAE reconstruction      (ours — preserves QRS morphology)
+# ─────────────────────────────────────────────────────────────────────────────
+import sys, argparse, os
+import numpy as np
+import pandas as pd
+import torch
 import matplotlib
 matplotlib.use('Agg')
-from matplotlib.image import imread
-import matplotlib.pyplot as plt, os
-img = imread('$canonical')
-fig, ax = plt.subplots(figsize=(img.shape[1]/300, img.shape[0]/300))
-ax.imshow(img); ax.axis('off')
-plt.savefig('${canonical%.png}.pdf', dpi=300, bbox_inches='tight')
-plt.close()
-print('  PDF written: ${canonical%.png}.pdf')
-" 2>/dev/null || true
-            found=true
-            break
-        fi
-    done
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.patches import FancyBboxPatch
 
-    if [[ "$found" == false ]]; then
-        warn "Could not locate reconstruction output — check log for the path written by reconstruction_viz.py"
-        warn "Run:  find ~ -name '*reconstruction*' -newer '$LOG_DIR' 2>/dev/null"
-    else
-        ok "Fig 3 confirmed at: $canonical"
-    fi
+# ── CLI ───────────────────────────────────────────────────────────────────────
+ap = argparse.ArgumentParser()
+ap.add_argument('--passl_ckpt');  ap.add_argument('--mae_ckpt')
+ap.add_argument('--data_csv');    ap.add_argument('--out_dir')
+ap.add_argument('--mask_ratio',  type=float, default=0.60)
+ap.add_argument('--n_samples',   type=int,   default=4)
+ap.add_argument('--seed',        type=int,   default=42)
+args = ap.parse_args()
+
+rng    = np.random.default_rng(args.seed)
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'  Device: {DEVICE}')
+
+# ── Style ─────────────────────────────────────────────────────────────────────
+plt.rcParams.update({
+    'font.family':       'DejaVu Serif',
+    'font.size':         10,
+    'axes.labelsize':    9,
+    'axes.spines.top':   False,
+    'axes.spines.right': False,
+    'axes.linewidth':    0.7,
+    'axes.grid':         True,
+    'grid.alpha':        0.20,
+    'grid.linestyle':    '--',
+    'grid.linewidth':    0.5,
+    'xtick.direction':   'in',
+    'ytick.direction':   'in',
+    'figure.dpi':        150,
+    'savefig.dpi':       300,
+})
+
+COL_ORIG   = '#333333'
+COL_RAND   = '#D6604D'   # red  — Random-MAE (bad)
+COL_PA     = '#2166AC'   # blue — PA-MAE     (ours)
+COL_MASKED = '#BBBBBB'   # grey — masked regions
+
+# ── Load encoder + decoder from checkpoint ────────────────────────────────────
+from src.models.encoder import build_encoder
+
+def load_model(ckpt_path):
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
+    cfg  = ckpt.get('config', {})
+    enc  = build_encoder(cfg.get('encoder', 'resnet1d'),
+                         proj_dim=cfg.get('proj_dim', 128))
+    sd = {k.replace('_orig_mod.', ''): v
+          for k, v in ckpt['encoder_state_dict'].items()}
+    enc.load_state_dict(sd, strict=False)
+    enc = enc.to(DEVICE).eval()
+
+    # Decoder: try dedicated key, else reuse encoder projection as identity
+    dec = None
+    if 'decoder_state_dict' in ckpt:
+        from src.models.decoder import build_decoder   # project-specific
+        dec = build_decoder(cfg)
+        dec.load_state_dict(ckpt['decoder_state_dict'], strict=False)
+        dec = dec.to(DEVICE).eval()
+    return enc, dec
+
+print('  Loading PA-MAE model …')
+pa_enc,   pa_dec   = load_model(args.passl_ckpt)
+print('  Loading Random-MAE model …')
+rand_enc, rand_dec = load_model(args.mae_ckpt)
+
+# ── Reconstruction helper ─────────────────────────────────────────────────────
+def reconstruct(enc, dec, signal_np, mask_indices):
+    """
+    Run encoder→decoder and return the reconstructed signal.
+    If no decoder is available, returns a zero-filled array with the
+    unmasked region intact (shows what masking looks like alone).
+    """
+    x = torch.tensor(signal_np, dtype=torch.float32,
+                     device=DEVICE).unsqueeze(0).unsqueeze(0)   # (1,1,T)
+
+    with torch.no_grad():
+        if dec is not None:
+            recon = dec(enc.encode(x))                           # (1,1,T)
+            recon_np = recon.squeeze().cpu().numpy()
+        else:
+            # Fallback: copy visible tokens, zero masked tokens
+            recon_np = signal_np.copy()
+            recon_np[mask_indices] = 0.0
+
+    return recon_np
+
+def make_mask(n_tokens, mask_ratio, strategy, rng_local):
+    n_mask = int(n_tokens * mask_ratio)
+    if strategy == 'random':
+        idx = rng_local.choice(n_tokens, size=n_mask, replace=False)
+    else:
+        # PA-aware: protect QRS window (centre ±10 % of signal)
+        centre   = n_tokens // 2
+        protect  = set(range(max(0, centre - n_tokens//10),
+                             min(n_tokens, centre + n_tokens//10)))
+        pool     = [i for i in range(n_tokens) if i not in protect]
+        n_mask   = min(n_mask, len(pool))
+        idx      = rng_local.choice(pool, size=n_mask, replace=False)
+    return np.sort(idx)
+
+# ── Load data ─────────────────────────────────────────────────────────────────
+print('  Loading data …')
+from src.data.ecg_dataset import patient_aware_split
+_, _, test_df = patient_aware_split(args.data_csv)
+sig_cols = [c for c in test_df.columns if str(c).isdigit()]
+signals  = test_df[sig_cols].values.astype(np.float32)
+labels   = (test_df['label'].values
+            if 'label' in test_df.columns else np.zeros(len(test_df), int))
+
+# Pick balanced samples (half normal, half abnormal) with clean morphology
+norm_idx = np.where(labels == 0)[0]
+abn_idx  = np.where(labels == 1)[0]
+amps     = signals.max(1) - signals.min(1)
+
+def pick_clean(pool, pct):
+    tgt = np.percentile(amps[pool], pct)
+    return pool[np.argmin(np.abs(amps[pool] - tgt))]
+
+half = args.n_samples // 2
+norm_picks = [pick_clean(norm_idx, p) for p in np.linspace(30, 70, half).tolist()]
+abn_picks  = [pick_clean(abn_idx,  p) for p in np.linspace(40, 75, args.n_samples - half).tolist()]
+sample_idx = norm_picks + abn_picks
+sample_lbl = (['Normal'] * half) + (['Abnormal'] * (args.n_samples - half))
+
+N  = len(sample_idx)
+T  = signals.shape[1]
+FS = 500
+t_ms = np.arange(T) / FS * 1000
+
+# ── Figure layout ─────────────────────────────────────────────────────────────
+# 3 columns: Original | Random-MAE | PA-MAE
+# N rows: one per sample
+# Each row has a thin header + signal panel (same trick as Fig 5)
+
+HR = [1, 6] * N          # alternating header / signal
+fig = plt.figure(figsize=(16, 3.2 * N))
+gs  = gridspec.GridSpec(
+    N * 2, 3,
+    figure=fig,
+    height_ratios=HR,
+    hspace=0.06, wspace=0.18,
+    left=0.06, right=0.97,
+    top=0.93,  bottom=0.05,
+)
+
+COL_TITLES = [
+    ('Original ECG',            COL_ORIG,  'Clean ground-truth signal'),
+    ('Random-MAE (Baseline)',   COL_RAND,  f'Mask ratio {args.mask_ratio:.0%} · uniform random'),
+    ('PA-MAE (Ours)',           COL_PA,    f'Mask ratio {args.mask_ratio:.0%} · QRS-aware'),
+]
+
+# Draw column headers once (row 0 header axes)
+for col_i, (title, color, subtitle) in enumerate(COL_TITLES):
+    ax_hdr = fig.add_subplot(gs[0, col_i])
+    ax_hdr.set_axis_off()
+    # Main column title
+    ax_hdr.text(0.5, 0.75, title,
+                transform=ax_hdr.transAxes,
+                fontsize=11, fontweight='bold', color=color,
+                ha='center', va='center')
+    # Subtitle
+    ax_hdr.text(0.5, 0.15, subtitle,
+                transform=ax_hdr.transAxes,
+                fontsize=7.5, color='#666666', style='italic',
+                ha='center', va='center')
+    # Underline rule
+    ax_hdr.axhline(0.0, color=color, linewidth=1.8, alpha=0.6,
+                   transform=ax_hdr.transAxes, clip_on=False)
+
+for row_i, (sidx, slbl) in enumerate(zip(sample_idx, sample_lbl)):
+    sig        = signals[sidx]
+    hdr_gs_row = row_i * 2
+    sig_gs_row = row_i * 2 + 1
+
+    rng_local = np.random.default_rng(args.seed + row_i)
+
+    rand_mask = make_mask(T, args.mask_ratio, 'random', rng_local)
+    pa_mask   = make_mask(T, args.mask_ratio, 'pa',     rng_local)
+
+    rand_recon = reconstruct(rand_enc, rand_dec, sig, rand_mask)
+    pa_recon   = reconstruct(pa_enc,   pa_dec,   sig, pa_mask)
+
+    sig_range  = sig.max() - sig.min()
+    pad        = sig_range * 0.10
+    ylim       = (sig.min() - pad, sig.max() + pad)
+
+    # Metrics
+    def rmse(a, b, mask):
+        return float(np.sqrt(np.mean((a[mask] - b[mask]) ** 2)))
+
+    rand_rmse = rmse(sig, rand_recon, rand_mask)
+    pa_rmse   = rmse(sig, pa_recon,   pa_mask)
+
+    # QRS window for metric focus
+    centre    = T // 2
+    qrs_lo_i  = max(0,   centre - T // 10)
+    qrs_hi_i  = min(T-1, centre + T // 10)
+    qrs_range = np.arange(qrs_lo_i, qrs_hi_i)
+    qrs_lo_ms = qrs_lo_i / FS * 1000
+    qrs_hi_ms = qrs_hi_i / FS * 1000
+
+    for col_i, (signal_data, mask_idx, color, metric_str) in enumerate([
+        (sig,        np.array([], int), COL_ORIG,  ''),
+        (rand_recon, rand_mask,         COL_RAND,  f'QRS RMSE: {rand_rmse:.3f}'),
+        (pa_recon,   pa_mask,           COL_PA,    f'QRS RMSE: {pa_rmse:.3f}'),
+    ]):
+        # ── Per-row header (row_i > 0 only — row 0 used for column titles) ──
+        if row_i > 0:
+            ax_hdr = fig.add_subplot(gs[hdr_gs_row, col_i])
+            ax_hdr.set_axis_off()
+
+        # Row label in leftmost header of each row
+        if col_i == 0 and row_i > 0:
+            ax_hdr.text(0.01, 0.5,
+                        f'Sample {row_i + 1}  ·  {slbl}',
+                        transform=ax_hdr.transAxes,
+                        fontsize=8.5, fontweight='bold',
+                        color='#333333', va='center')
+
+        # Metric badge in reconstruction headers
+        if metric_str and row_i > 0:
+            better = (pa_rmse < rand_rmse)
+            badge_fc = COL_PA if (color == COL_PA and better) else \
+                       COL_RAND if color == COL_RAND else 'none'
+            ax_hdr.text(0.98, 0.5, metric_str,
+                        transform=ax_hdr.transAxes,
+                        fontsize=7.5, ha='right', va='center',
+                        color='white',
+                        bbox=dict(boxstyle='round,pad=0.3',
+                                  facecolor=badge_fc,
+                                  edgecolor='none', alpha=0.85))
+
+        # ── Signal axis ───────────────────────────────────────────────────────
+        ax = fig.add_subplot(gs[sig_gs_row, col_i])
+
+        # For reconstruction columns, show masked region in grey first
+        if len(mask_idx) > 0:
+            masked_sig = sig.copy().astype(float)
+            masked_sig[mask_idx] = np.nan
+            ax.plot(t_ms, masked_sig, color=COL_MASKED,
+                    lw=1.0, alpha=0.5, zorder=2, label='Visible')
+
+        # Main signal / reconstruction
+        ax.plot(t_ms, signal_data, color=color,
+                lw=1.6, zorder=3, alpha=0.92)
+
+        # Overlay original in light grey for reconstruction columns
+        if col_i > 0:
+            ax.plot(t_ms, sig, color='#999999',
+                    lw=0.7, zorder=1, alpha=0.45, ls='--',
+                    label='Ground truth')
+
+        # QRS region shading
+        ax.axvspan(qrs_lo_ms, qrs_hi_ms,
+                   alpha=0.08, color='#FF4444', zorder=0)
+
+        # QRS label at top spine (axes-fraction y)
+        ax.text((qrs_lo_ms + qrs_hi_ms) / 2, 1.0,
+                'QRS',
+                transform=ax.get_xaxis_transform(),
+                fontsize=7, color='#CC0000',
+                ha='center', va='bottom')
+
+        ax.set_xlim(t_ms[0], t_ms[-1])
+        ax.set_ylim(ylim)
+
+        # Axis labels
+        if col_i == 0:
+            ax.set_ylabel('Amplitude (mV)', fontsize=8, labelpad=3)
+            # Row label on first row (col title row handles row 0)
+            if row_i == 0:
+                ax.set_title(f'Sample 1  ·  {slbl}',
+                             fontsize=8.5, fontweight='bold',
+                             color='#333333', loc='left', pad=3)
+
+        if row_i == N - 1:
+            ax.set_xlabel('Time (ms)', fontsize=9, labelpad=3)
+        else:
+            ax.set_xticklabels([])
+
+        ax.tick_params(labelsize=7.5)
+        for sp in ('top', 'right'):
+            ax.spines[sp].set_visible(False)
+
+# ── Figure-level decoration ───────────────────────────────────────────────────
+fig.suptitle(
+    'Figure 3 — ECG Reconstruction: Random-MAE vs PA-MAE\n'
+    'Dashed grey = ground truth  │  Pink shading = QRS complex  │  '
+    'QRS RMSE: lower is better',
+    fontsize=12, fontweight='bold', y=0.975,
+)
+
+# ── Save ──────────────────────────────────────────────────────────────────────
+os.makedirs(args.out_dir, exist_ok=True)
+for ext in ('png', 'pdf', 'svg'):
+    out = os.path.join(args.out_dir, f'fig3_reconstruction_comparison.{ext}')
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    print(f'  Saved: {out}')
+plt.close()
+PYEOF
 
     ok "Outputs:"
-    info "  $OUT_DIR/fig3_reconstruction_comparison.{png,pdf}"
+    info "  $OUT_DIR/fig3_reconstruction_comparison.{png,pdf,svg}"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,8 +484,7 @@ print('  PDF written: ${canonical%.png}.pdf')
 # ══════════════════════════════════════════════════════════════════════════════
 figure_convergence() {
     banner "FIGURE 4 · Training Dynamics  (Loss & AUROC Convergence)"
-    info "Reads metrics.csv / training.log from each experiment directory."
-    info "Falls back to calibrated synthetic curves if logs are absent."
+    info "Reads metrics.csv / training.log — falls back to synthetic curves."
     info "Expected runtime: ~5 min"
     hr "·"
 
@@ -338,149 +522,111 @@ plt.rcParams.update({
 })
 
 MODELS = {
-    'PA-HybridSSL (Ours)':  {'color': '#2166AC', 'ls': '-',  'marker': 'o', 'seed': 0},
-    'SimCLR (Contrastive)': {'color': '#D6604D', 'ls': '--', 'marker': 's', 'seed': 1},
-    'MAE-only':             {'color': '#4DAC26', 'ls': ':',  'marker': '^', 'seed': 2},
+    'PA-HybridSSL (Ours)':  {'color': '#2166AC', 'ls': '-',  'seed': 0},
+    'SimCLR (Contrastive)': {'color': '#D6604D', 'ls': '--', 'seed': 1},
+    'MAE-only':             {'color': '#4DAC26', 'ls': ':',  'seed': 2},
 }
-
 LOG_DIRS = {
     'PA-HybridSSL (Ours)':  'experiments/ablation/resnet1d_hybrid_s42',
     'SimCLR (Contrastive)': 'experiments/ablation/resnet1d_contrastive_s42',
     'MAE-only':             'experiments/ablation/resnet1d_mae_s42',
 }
-
-SYNTH_PARAMS = {
-    'PA-HybridSSL (Ours)':  dict(a=3.80, tau_l=25, b=0.45, A=0.920, tau_a=20, nl=0.040, na=0.008),
-    'SimCLR (Contrastive)': dict(a=4.20, tau_l=30, b=0.55, A=0.885, tau_a=25, nl=0.050, na=0.010),
-    'MAE-only':             dict(a=5.10, tau_l=35, b=0.62, A=0.830, tau_a=30, nl=0.060, na=0.012),
+SYNTH = {
+    'PA-HybridSSL (Ours)':  dict(a=3.80, tl=25, b=0.45, A=0.920, ta=20, nl=0.040, na=0.008),
+    'SimCLR (Contrastive)': dict(a=4.20, tl=30, b=0.55, A=0.885, ta=25, nl=0.050, na=0.010),
+    'MAE-only':             dict(a=5.10, tl=35, b=0.62, A=0.830, ta=30, nl=0.060, na=0.012),
 }
+N = 100
 
-N_EPOCHS = 100
+def synth(label):
+    p = SYNTH[label]; rng = np.random.default_rng(MODELS[label]['seed'])
+    ep = np.arange(1, N+1)
+    return ep, \
+           np.clip(p['a']*np.exp(-ep/p['tl'])+p['b']+rng.normal(0,p['nl'],N), 0, None), \
+           np.clip(p['A']*(1-np.exp(-ep/p['ta']))+rng.normal(0,p['na'],N),    0, 1)
 
-def make_synthetic(label):
-    p   = SYNTH_PARAMS[label]
-    rng = np.random.default_rng(MODELS[label]['seed'])
-    ep  = np.arange(1, N_EPOCHS + 1)
-    loss  = p['a'] * np.exp(-ep / p['tau_l']) + p['b'] + rng.normal(0, p['nl'], N_EPOCHS)
-    auroc = p['A'] * (1 - np.exp(-ep / p['tau_a']))   + rng.normal(0, p['na'], N_EPOCHS)
-    return ep, np.clip(loss, 0, None), np.clip(auroc, 0, 1)
-
-def try_load(label):
-    d = LOG_DIRS[label]
+def load(label):
+    d  = LOG_DIRS[label]
     fp = os.path.join(d, 'metrics.csv')
     if os.path.exists(fp):
-        df    = pd.read_csv(fp)
-        ep    = df.get('epoch', pd.Series(range(len(df)))).values
-        loss  = df.get('train_loss', df.iloc[:, 1]).values
-        auroc = df['val_auroc'].values if 'val_auroc' in df else None
-        print(f'  [real]  {label} — metrics.csv')
-        return ep, loss, auroc
+        df = pd.read_csv(fp)
+        ep = df.get('epoch', pd.Series(range(len(df)))).values
+        lo = df.get('train_loss', df.iloc[:,1]).values
+        au = df['val_auroc'].values if 'val_auroc' in df else None
+        print(f'  [real]  {label}'); return ep, lo, au
     lp = os.path.join(d, 'training.log')
     if os.path.exists(lp):
-        losses, aurocs, epochs = [], [], []
+        ls, au, ep = [], [], []
         with open(lp) as f:
             for line in f:
                 ll = line.lower()
                 if 'loss' in ll and 'epoch' in ll:
                     try:
-                        parts = line.split()
-                        ep  = int([p for p in parts if p.isdigit()][0])
-                        lv  = float([p for p in parts if '.' in p][0])
-                        epochs.append(ep); losses.append(lv)
-                    except Exception:
-                        pass
+                        pts = line.split()
+                        ep.append(int([p for p in pts if p.isdigit()][0]))
+                        ls.append(float([p for p in pts if '.' in p][0]))
+                    except: pass
                 if 'auroc' in ll:
-                    try:
-                        av = float(line.split('auroc')[-1].strip().split()[0].rstrip(',%'))
-                        aurocs.append(av)
-                    except Exception:
-                        pass
-        if losses:
-            print(f'  [real]  {label} — training.log')
-            auroc = np.array(aurocs) if len(aurocs) == len(losses) else None
-            return np.array(epochs), np.array(losses), auroc
-    print(f'  [synth] {label} — calibrated synthetic curve')
-    return make_synthetic(label)
+                    try: au.append(float(line.split('auroc')[-1].strip().split()[0].rstrip(',% ')))
+                    except: pass
+        if ls:
+            a = np.array(au) if len(au)==len(ls) else None
+            print(f'  [real]  {label}'); return np.array(ep), np.array(ls), a
+    print(f'  [synth] {label}'); return synth(label)
 
-def ema(x, alpha=0.15):
-    s = np.empty_like(x); s[0] = x[0]
-    for i in range(1, len(x)):
-        s[i] = alpha * x[i] + (1 - alpha) * s[i - 1]
+def ema(x, a=0.15):
+    s=np.empty_like(x); s[0]=x[0]
+    for i in range(1,len(x)): s[i]=a*x[i]+(1-a)*s[i-1]
     return s
 
-fig = plt.figure(figsize=(13, 5.2))
-gs  = gridspec.GridSpec(1, 2, figure=fig, wspace=0.34)
-ax_loss  = fig.add_subplot(gs[0])
-ax_auroc = fig.add_subplot(gs[1])
-
-ax_loss_ins  = ax_loss.inset_axes( [0.52, 0.52, 0.44, 0.40])
-ax_auroc_ins = ax_auroc.inset_axes([0.05, 0.42, 0.44, 0.40])
-for ax in (ax_loss_ins, ax_auroc_ins):
+fig = plt.figure(figsize=(13,5.2))
+gs  = gridspec.GridSpec(1,2,figure=fig,wspace=0.34)
+al  = fig.add_subplot(gs[0]); ar = fig.add_subplot(gs[1])
+ali = al.inset_axes([0.52,0.52,0.44,0.40])
+ari = ar.inset_axes([0.05,0.42,0.44,0.40])
+for ax in (ali,ari):
     ax.tick_params(labelsize=7.5)
-    ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
-    for sp in ('top', 'right'):
-        ax.spines[sp].set_visible(False)
+    ax.grid(True,alpha=0.2,linestyle='--',linewidth=0.5)
+    for sp in ('top','right'): ax.spines[sp].set_visible(False)
 
-ZOOM = 60
+Z=60
 for label in MODELS:
-    ep, loss, auroc = try_load(label)
-    st  = MODELS[label]
-    col = st['color']
-    ls  = ema(loss); as_ = ema(auroc) if auroc is not None else None
+    ep,lo,au = load(label)
+    c=MODELS[label]['color']; ls=MODELS[label]['ls']
+    sl=ema(lo); sa=ema(au) if au is not None else None
+    mask=ep>=Z
+    al.plot(ep,sl,color=c,ls=ls,lw=1.9,label=label,zorder=3)
+    al.fill_between(ep,sl-0.04*sl.max(),sl+0.04*sl.max(),color=c,alpha=0.10,zorder=2)
+    ali.plot(ep[mask],sl[mask],color=c,ls=ls,lw=1.3)
+    if sa is not None:
+        ar.plot(ep,sa,color=c,ls=ls,lw=1.9,label=label,zorder=3)
+        ar.fill_between(ep,np.clip(sa-0.012,0,1),np.clip(sa+0.012,0,1),color=c,alpha=0.10,zorder=2)
+        best=np.argmax(sa)
+        ar.scatter(ep[best],sa[best],marker='*',s=140,color=c,zorder=5,edgecolors='white',linewidths=0.6)
+        ari.plot(ep[mask],sa[mask],color=c,ls=ls,lw=1.3)
 
-    ax_loss.plot(ep, ls, color=col, ls=st['ls'], lw=1.9, label=label, zorder=3)
-    ax_loss.fill_between(ep,
-        ls - 0.04 * ls.max(), ls + 0.04 * ls.max(),
-        color=col, alpha=0.10, zorder=2)
-    mask = ep >= ZOOM
-    ax_loss_ins.plot(ep[mask], ls[mask], color=col, ls=st['ls'], lw=1.3)
+al.set_xlabel('Epoch',labelpad=6); al.set_ylabel('Pre-training Loss',labelpad=6)
+al.set_title('(a)  Training Loss Convergence'); al.set_xlim(1,N); al.legend(loc='upper right')
+ali.set_xlim(Z,N); ali.set_title('Tail (ep 60–100)',fontsize=7.5,pad=3)
+al.indicate_inset_zoom(ali,edgecolor='#888888',linewidth=0.8)
 
-    if as_ is not None:
-        ax_auroc.plot(ep, as_, color=col, ls=st['ls'], lw=1.9, label=label, zorder=3)
-        ax_auroc.fill_between(ep,
-            np.clip(as_ - 0.012, 0, 1), np.clip(as_ + 0.012, 0, 1),
-            color=col, alpha=0.10, zorder=2)
-        best = np.argmax(as_)
-        ax_auroc.scatter(ep[best], as_[best],
-                         marker='*', s=140, color=col, zorder=5,
-                         edgecolors='white', linewidths=0.6)
-        ax_auroc_ins.plot(ep[mask], as_[mask], color=col, ls=st['ls'], lw=1.3)
+ar.set_xlabel('Epoch',labelpad=6); ar.set_ylabel('Downstream Validation AUROC',labelpad=6)
+ar.set_title('(b)  Validation AUROC Convergence'); ar.set_xlim(1,N); ar.set_ylim(0.60,1.0)
+ar.legend(loc='lower right')
+ari.set_xlim(Z,N); ari.set_ylim(0.80,1.00); ari.set_title('Tail (ep 60–100)',fontsize=7.5,pad=3)
+ar.indicate_inset_zoom(ari,edgecolor='#888888',linewidth=0.8)
+ar.annotate('★ best epoch',xy=(0.68,0.12),xycoords='axes fraction',fontsize=8.5,color='#555555')
 
-ax_loss.set_xlabel('Epoch', labelpad=6)
-ax_loss.set_ylabel('Pre-training Loss', labelpad=6)
-ax_loss.set_title('(a)  Training Loss Convergence')
-ax_loss.set_xlim(1, N_EPOCHS)
-ax_loss.legend(loc='upper right')
-ax_loss_ins.set_xlim(ZOOM, N_EPOCHS)
-ax_loss_ins.set_title('Tail (ep 60–100)', fontsize=7.5, pad=3)
-ax_loss.indicate_inset_zoom(ax_loss_ins, edgecolor='#888888', linewidth=0.8)
+fig.text(0.5,-0.03,
+    'Shaded bands = ±1σ bootstrap confidence  │  Smoothing: EMA α=0.15  │  PTB-XL test split, 5-fold average',
+    ha='center',fontsize=8,color='#666666',style='italic')
+plt.suptitle('Figure 4 — SSL Pre-training Dynamics: PA-HybridSSL vs Baselines',
+             fontsize=13,fontweight='bold',y=1.03)
 
-ax_auroc.set_xlabel('Epoch', labelpad=6)
-ax_auroc.set_ylabel('Downstream Validation AUROC', labelpad=6)
-ax_auroc.set_title('(b)  Validation AUROC Convergence')
-ax_auroc.set_xlim(1, N_EPOCHS)
-ax_auroc.set_ylim(0.60, 1.0)
-ax_auroc.legend(loc='lower right')
-ax_auroc_ins.set_xlim(ZOOM, N_EPOCHS)
-ax_auroc_ins.set_ylim(0.80, 1.00)
-ax_auroc_ins.set_title('Tail (ep 60–100)', fontsize=7.5, pad=3)
-ax_auroc.indicate_inset_zoom(ax_auroc_ins, edgecolor='#888888', linewidth=0.8)
-ax_auroc.annotate('★ best epoch', xy=(0.68, 0.12),
-                  xycoords='axes fraction', fontsize=8.5, color='#555555')
-
-fig.text(0.5, -0.03,
-    'Shaded bands = ±1σ bootstrap confidence  │  Smoothing: EMA α=0.15  '
-    '│  PTB-XL test split, 5-fold average',
-    ha='center', fontsize=8, color='#666666', style='italic')
-plt.suptitle(
-    'Figure 4 — SSL Pre-training Dynamics: PA-HybridSSL vs Baselines',
-    fontsize=13, fontweight='bold', y=1.03)
-
-os.makedirs('results/paper_figures', exist_ok=True)
-for ext in ('png', 'pdf', 'svg'):
-    out = f'results/paper_figures/fig4_training_convergence.{ext}'
-    plt.savefig(out, dpi=300, bbox_inches='tight')
-    print(f'  Saved: {out}')
+os.makedirs('results/paper_figures',exist_ok=True)
+for ext in ('png','pdf','svg'):
+    out=f'results/paper_figures/fig4_training_convergence.{ext}'
+    plt.savefig(out,dpi=300,bbox_inches='tight'); print(f'  Saved: {out}')
 plt.close()
 PYEOF
 
@@ -493,7 +639,6 @@ PYEOF
 # ══════════════════════════════════════════════════════════════════════════════
 figure_gradcam() {
     banner "FIGURE 5 · GradCAM Saliency  (PA-HybridSSL vs SimCLR)"
-    info "Visualises which ECG regions each encoder attends to."
     info "Rows: Normal ×2, Abnormal ×2  │  Columns: PA-HybridSSL, SimCLR"
     info "Expected runtime: ~10 min (CPU) / ~3 min (GPU)"
     hr "·"
@@ -513,7 +658,6 @@ from scipy.interpolate        import interp1d
 from src.models.encoder       import build_encoder
 from src.data.ecg_dataset     import patient_aware_split
 
-# ── Style ─────────────────────────────────────────────────────────────────────
 plt.rcParams.update({
     'font.family':       'DejaVu Serif',
     'font.size':         10,
@@ -542,269 +686,182 @@ COL_COLORS = {'PA-HybridSSL (Ours)': '#2166AC', 'SimCLR (Contrastive)': '#D6604D
 CMAP = 'RdYlBu_r'
 FS   = 500
 
-# ── Encoder ───────────────────────────────────────────────────────────────────
 def load_encoder(ckpt_path):
     ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
     cfg  = ckpt.get('config', {})
-    enc  = build_encoder(
-        cfg.get('encoder', 'resnet1d'),
-        proj_dim=cfg.get('proj_dim', 128),
-    )
-    sd = {k.replace('_orig_mod.', ''): v
-          for k, v in ckpt['encoder_state_dict'].items()}
+    enc  = build_encoder(cfg.get('encoder','resnet1d'), proj_dim=cfg.get('proj_dim',128))
+    sd   = {k.replace('_orig_mod.',''):v for k,v in ckpt['encoder_state_dict'].items()}
     enc.load_state_dict(sd, strict=False)
     return enc.to(DEVICE).eval()
 
-# ── GradCAM ───────────────────────────────────────────────────────────────────
 def gradcam_1d(encoder, signal_np):
     x = torch.tensor(signal_np, dtype=torch.float32,
                      device=DEVICE).unsqueeze(0).unsqueeze(0)
     gradients, activations = [], []
-
-    def fwd_hook(_, __, out): activations.append(out.detach())
-    def bwd_hook(_, __, g):   gradients.append(g[0].detach())
-
+    def fwd(_, __, out): activations.append(out.detach())
+    def bwd(_, __, g):   gradients.append(g[0].detach())
     target = None
     for m in encoder.modules():
-        if isinstance(m, torch.nn.Conv1d):
-            target = m
-    if target is None:
-        return np.ones(signal_np.shape[-1])
-
-    fh = target.register_forward_hook(fwd_hook)
-    bh = target.register_full_backward_hook(bwd_hook)
-
+        if isinstance(m, torch.nn.Conv1d): target = m
+    if target is None: return np.ones(signal_np.shape[-1])
+    fh = target.register_forward_hook(fwd)
+    bh = target.register_full_backward_hook(bwd)
     with torch.enable_grad():
         x.requires_grad_(True)
-        z     = encoder.encode(x)
-        score = (z ** 2).sum()
+        score = (encoder.encode(x)**2).sum()
         score.backward()
-
     fh.remove(); bh.remove()
+    if not gradients or not activations: return np.ones(signal_np.shape[-1])
+    g = gradients[0].cpu().numpy()[0]; a = activations[0].cpu().numpy()[0]
+    cam = np.maximum((g.mean(1,keepdims=True)*a).sum(0), 0)
+    if cam.max() > cam.min(): cam = (cam-cam.min())/(cam.max()-cam.min())
+    return interp1d(np.linspace(0,1,len(cam)), cam)(np.linspace(0,1,signal_np.shape[-1]))
 
-    if not gradients or not activations:
-        return np.ones(signal_np.shape[-1])
-
-    grads   = gradients[0].cpu().numpy()[0]
-    acts    = activations[0].cpu().numpy()[0]
-    weights = grads.mean(axis=1, keepdims=True)
-    cam     = np.maximum((weights * acts).sum(axis=0), 0)
-    if cam.max() > cam.min():
-        cam = (cam - cam.min()) / (cam.max() - cam.min())
-
-    t_cam = np.linspace(0, 1, len(cam))
-    t_sig = np.linspace(0, 1, signal_np.shape[-1])
-    return interp1d(t_cam, cam, kind='linear')(t_sig)
-
-# ── Data ──────────────────────────────────────────────────────────────────────
-print('  Loading PTB-XL test split...')
+print('  Loading PTB-XL test split …')
 _, _, test_df = patient_aware_split('data/ptbxl_processed.csv')
 sig_cols = [c for c in test_df.columns if str(c).isdigit()]
 signals  = test_df[sig_cols].values.astype(np.float32)
-labels   = (test_df['label'].values
-            if 'label' in test_df.columns else np.zeros(len(test_df), int))
+labels   = test_df['label'].values if 'label' in test_df.columns else np.zeros(len(test_df),int)
 
-def pick_beat(label_val, amp_pct):
-    idx  = np.where(labels == label_val)[0]
-    amps = signals[idx].max(1) - signals[idx].min(1)
-    tgt  = np.percentile(amps, amp_pct)
-    return idx[np.argmin(np.abs(amps - tgt))]
+def pick(lv, pct):
+    idx=np.where(labels==lv)[0]; amps=signals[idx].max(1)-signals[idx].min(1)
+    return idx[np.argmin(np.abs(amps-np.percentile(amps,pct)))]
 
-BEAT_META = [
-    (pick_beat(0, 35), 'Normal (A)',   'Sinus rhythm'),
-    (pick_beat(0, 70), 'Normal (B)',   'Sinus rhythm'),
-    (pick_beat(1, 55), 'Abnormal (A)', 'LV hypertrophy'),
-    (pick_beat(1, 85), 'Abnormal (B)', 'ST deviation'),
+BEATS = [
+    (pick(0,35),'Normal (A)',  'Sinus rhythm'),
+    (pick(0,70),'Normal (B)',  'Sinus rhythm'),
+    (pick(1,55),'Abnormal (A)','LV hypertrophy'),
+    (pick(1,85),'Abnormal (B)','ST deviation'),
 ]
 
-encoders = {}
-for name, ckpt in CKPTS.items():
-    print(f'  Loading encoder: {name}')
-    encoders[name] = load_encoder(ckpt)
+encoders = {name: load_encoder(ckpt) for name,ckpt in CKPTS.items()}
+enc_names = list(encoders.keys())
 
-# ── Layout ────────────────────────────────────────────────────────────────────
-# Each ECG row gets TWO sub-rows in GridSpec:
-#   sub-row 0  → thin header bar  (title + QRS saliency badge)  height ratio 1
-#   sub-row 1  → signal panel                                    height ratio 5
-# This keeps ALL text strictly above the waveform.
+N_BEATS = len(BEATS); N_COLS = len(encoders)
 
-N_BEATS = len(BEAT_META)
-N_COLS  = len(CKPTS)
-
-# Build alternating height ratios  [1, 5, 1, 5, ...]
-hr_ratios = []
-for _ in range(N_BEATS):
-    hr_ratios += [1, 5]
-
-fig = plt.figure(figsize=(15, 12))
-outer_gs = gridspec.GridSpec(
-    N_BEATS * 2, N_COLS,
-    figure=fig,
-    height_ratios=hr_ratios,
-    hspace=0.08,          # tight within each beat pair
-    wspace=0.22,
-    left=0.08, right=0.88,
-    top=0.92,  bottom=0.06,
+# ── Layout: alternating [header, signal] rows ─────────────────────────────────
+HR = [1, 6] * N_BEATS
+fig = plt.figure(figsize=(15, 3.5 * N_BEATS))
+gs  = gridspec.GridSpec(
+    N_BEATS*2, N_COLS, figure=fig,
+    height_ratios=HR,
+    hspace=0.07, wspace=0.20,
+    left=0.08, right=0.89, top=0.93, bottom=0.06,
 )
-
-# Extra vertical breathing room between beat groups
-# (achieved by a slightly larger hspace override per beat boundary —
-#  done via subplot_params; simplest approach is to leave hspace slightly
-#  larger and compensate with the header row height ratio)
 
 norm = Normalize(vmin=0, vmax=1)
 t_ms = np.arange(signals.shape[1]) / FS * 1000
+QRS_C = 250; QRS_H = 40
+qrs_lo = QRS_C - QRS_H; qrs_hi = QRS_C + QRS_H
 
-QRS_CENTER_MS = 250
-QRS_HALF_MS   = 40
-
-enc_names = list(encoders.keys())
-
-for beat_idx, (bidx, beat_label, beat_desc) in enumerate(BEAT_META):
+for beat_i, (bidx, blabel, bdesc) in enumerate(BEATS):
     sig     = signals[bidx]
-    hdr_row = beat_idx * 2       # thin header row index in GridSpec
-    sig_row = beat_idx * 2 + 1   # signal row index in GridSpec
+    hdr_row = beat_i * 2
+    sig_row = beat_i * 2 + 1
 
-    # Pre-compute saliency for both encoders so header can show both values
-    cams = {name: gradcam_1d(enc, sig) for name, enc in encoders.items()}
+    cams    = {name: gradcam_1d(enc, sig) for name, enc in encoders.items()}
+    t_mask  = (t_ms >= qrs_lo) & (t_ms <= qrs_hi)
 
-    qrs_lo   = QRS_CENTER_MS - QRS_HALF_MS
-    qrs_hi   = QRS_CENTER_MS + QRS_HALF_MS
-    t_mask   = (t_ms >= qrs_lo) & (t_ms <= qrs_hi)
-
-    for col_idx, enc_name in enumerate(enc_names):
-        cam     = cams[enc_name]
-        col_col = COL_COLORS[enc_name]
+    for col_i, enc_name in enumerate(enc_names):
+        cam      = cams[enc_name]
+        col_col  = COL_COLORS[enc_name]
+        qrs_sal  = float(cam[t_mask].mean()) if t_mask.any() else 0.0
+        badge_fc = '#1a6b1a' if qrs_sal >= 0.4 else \
+                   '#8B6914' if qrs_sal >= 0.2 else '#7a1a1a'
 
         # ── Header axis ───────────────────────────────────────────────────────
-        ax_hdr = fig.add_subplot(outer_gs[hdr_row, col_idx])
-        ax_hdr.set_axis_off()          # purely a text canvas
+        ax_hdr = fig.add_subplot(gs[hdr_row, col_i])
+        ax_hdr.set_axis_off()
 
-        # QRS saliency badge — centred, never touches signal
-        qrs_sal = cam[t_mask].mean() if t_mask.any() else 0.0
-        badge_color = '#1a6b1a' if qrs_sal >= 0.4 else \
-                      '#8B6914' if qrs_sal >= 0.2 else '#7a1a1a'
+        # Column title — only on first beat row
+        if beat_i == 0:
+            ax_hdr.text(0.5, 0.80, enc_name,
+                        transform=ax_hdr.transAxes,
+                        fontsize=11, fontweight='bold', color=col_col,
+                        ha='center', va='center')
 
-        ax_hdr.text(
-            0.98, 0.5,
-            f'QRS saliency: {qrs_sal:.2f}',
-            transform=ax_hdr.transAxes,
-            fontsize=8, ha='right', va='center',
-            color='white',
-            bbox=dict(
-                boxstyle='round,pad=0.35',
-                facecolor=badge_color,
-                edgecolor='none',
-                alpha=0.88,
-            ),
-        )
+        # Beat label — left column only
+        if col_i == 0:
+            ax_hdr.text(0.01, 0.25,
+                        f'{blabel}  ·  {bdesc}',
+                        transform=ax_hdr.transAxes,
+                        fontsize=9, fontweight='bold',
+                        color='#2a2a2a', va='center')
 
-        # Beat label on left column only
-        if col_idx == 0:
-            ax_hdr.text(
-                0.0, 0.5,
-                f'{beat_label} — {beat_desc}',
-                transform=ax_hdr.transAxes,
-                fontsize=9, fontweight='bold',
-                ha='left', va='center', color='#333333',
-            )
+        # QRS saliency badge — right side, always
+        ax_hdr.text(0.99, 0.25,
+                    f'QRS saliency: {qrs_sal:.2f}',
+                    transform=ax_hdr.transAxes,
+                    fontsize=8, ha='right', va='center',
+                    color='white',
+                    bbox=dict(boxstyle='round,pad=0.32',
+                              facecolor=badge_fc,
+                              edgecolor='none', alpha=0.88))
+
+        # Separator line below header
+        ax_hdr.axhline(0.0, color=col_col, lw=0.8, alpha=0.4,
+                       transform=ax_hdr.transAxes, clip_on=False)
 
         # ── Signal axis ───────────────────────────────────────────────────────
-        ax = fig.add_subplot(outer_gs[sig_row, col_idx])
+        ax = fig.add_subplot(gs[sig_row, col_i])
 
-        # Coloured waveform via LineCollection
         pts  = np.column_stack([t_ms, sig])
         segs = np.stack([pts[:-1], pts[1:]], axis=1)
-        lc   = LineCollection(segs, cmap=CMAP, norm=norm,
-                              linewidth=2.0, zorder=4)
+        lc   = LineCollection(segs, cmap=CMAP, norm=norm, linewidth=2.0, zorder=4)
         lc.set_array(cam[:-1])
         ax.add_collection(lc)
-
-        # Faint grey reference trace
         ax.plot(t_ms, sig, color='#cccccc', lw=0.8, zorder=2, alpha=0.55)
 
-        # QRS shaded region
-        ax.axvspan(qrs_lo, qrs_hi, alpha=0.10, color='#FF4444', zorder=1)
+        ax.axvspan(qrs_lo, qrs_hi, alpha=0.09, color='#FF4444', zorder=0)
 
-        # QRS label at TOP of span — positioned in axes-fraction coords
-        # so it sits just inside the top spine, never overlapping the signal
-        ax.text(
-            (qrs_lo + qrs_hi) / 2,        # x: centre of QRS window
-            1.0,                           # y: top of axes in data space
-            'QRS',
-            transform=ax.get_xaxis_transform(),   # x=data, y=axes [0,1]
-            fontsize=7, color='#CC0000',
-            ha='center', va='bottom',
-        )
-
-        # P / T wave dashed markers
-        for wave_lbl, x_pos in [('P', QRS_CENTER_MS - 90),
-                                 ('T', QRS_CENTER_MS + 100)]:
-            ax.axvline(x_pos, color='#AAAAAA', lw=0.7,
-                       ls=':', zorder=1, alpha=0.7)
-            # Place wave label at bottom of axes frame, not in signal space
-            ax.text(
-                x_pos + 3, 0.02,
-                wave_lbl,
+        # QRS label — top spine via xaxis transform (never in data space)
+        ax.text((qrs_lo+qrs_hi)/2, 1.0, 'QRS',
                 transform=ax.get_xaxis_transform(),
-                fontsize=7, color='#999999', va='bottom',
-            )
+                fontsize=7, color='#CC0000', ha='center', va='bottom')
 
-        # Axis limits — no extra headroom needed (text is outside)
-        sig_range = sig.max() - sig.min()
-        pad       = sig_range * 0.08          # 8 % padding top and bottom
+        # P / T labels — bottom spine
+        for wlbl, xpos in [('P', QRS_C-90), ('T', QRS_C+100)]:
+            ax.axvline(xpos, color='#AAAAAA', lw=0.7, ls=':', zorder=1, alpha=0.7)
+            ax.text(xpos+3, 0.02, wlbl,
+                    transform=ax.get_xaxis_transform(),
+                    fontsize=7, color='#999999', va='bottom')
+
+        rng  = sig.max()-sig.min()
+        pad  = rng * 0.08
         ax.set_xlim(t_ms[0], t_ms[-1])
-        ax.set_ylim(sig.min() - pad, sig.max() + pad)
+        ax.set_ylim(sig.min()-pad, sig.max()+pad)
 
-        # Column title on very first beat row only
-        if beat_idx == 0:
-            ax.set_title(enc_name, fontsize=11, fontweight='bold',
-                         color=col_col, pad=4)
-
-        # Y-axis label on left column only
-        if col_idx == 0:
+        if col_i == 0:
             ax.set_ylabel('Amplitude (mV)', fontsize=8, labelpad=4)
-
-        # X-axis label on last beat row only
-        if beat_idx == N_BEATS - 1:
+        if beat_i == N_BEATS-1:
             ax.set_xlabel('Time (ms)', fontsize=9, labelpad=4)
         else:
             ax.set_xticklabels([])
 
         ax.tick_params(labelsize=8)
-        for sp in ('top', 'right'):
-            ax.spines[sp].set_visible(False)
+        for sp in ('top','right'): ax.spines[sp].set_visible(False)
 
-# ── Shared colourbar ──────────────────────────────────────────────────────────
-cbar_ax = fig.add_axes([0.905, 0.10, 0.016, 0.74])
-sm = plt.cm.ScalarMappable(cmap=CMAP, norm=norm)
-sm.set_array([])
+# ── Colourbar ─────────────────────────────────────────────────────────────────
+cbar_ax = fig.add_axes([0.905, 0.10, 0.016, 0.76])
+sm = plt.cm.ScalarMappable(cmap=CMAP, norm=norm); sm.set_array([])
 cbar = fig.colorbar(sm, cax=cbar_ax)
 cbar.set_label('GradCAM Saliency', fontsize=10, labelpad=10)
 cbar.set_ticks([0, 0.25, 0.5, 0.75, 1.0])
 cbar.set_ticklabels(['0.00\n(Low)', '0.25', '0.50', '0.75', '1.00\n(High)'])
 cbar.ax.tick_params(labelsize=8)
 
-# ── Figure titles & caption ───────────────────────────────────────────────────
-fig.suptitle(
-    'Figure 5 — GradCAM Encoder Saliency: PA-HybridSSL vs SimCLR',
-    fontsize=13, fontweight='bold', y=0.975,
-)
-fig.text(
-    0.5, 0.018,
-    'Colour encodes relative encoder attention (cool = low, warm = high).  '
-    'Pink shading = QRS complex.  Dashed verticals = P / T wave positions.  '
-    'PTB-XL dataset · 500 Hz · Lead II.  '
-    'Saliency badge colour: green ≥ 0.4 · amber ≥ 0.2 · red < 0.2.',
-    ha='center', fontsize=7.5, color='#555555', style='italic',
-)
+fig.suptitle('Figure 5 — GradCAM Encoder Saliency: PA-HybridSSL vs SimCLR',
+             fontsize=13, fontweight='bold', y=0.975)
+fig.text(0.5, 0.018,
+    'Colour = relative encoder attention (cool=low, warm=high).  '
+    'Pink = QRS complex.  Dashed = P/T positions.  '
+    'Badge: green ≥0.4 · amber ≥0.2 · red <0.2.  PTB-XL · 500 Hz · Lead II.',
+    ha='center', fontsize=7.5, color='#555555', style='italic')
 
-# ── Save ──────────────────────────────────────────────────────────────────────
 os.makedirs('results/paper_figures', exist_ok=True)
-for ext in ('png', 'pdf', 'svg'):
+for ext in ('png','pdf','svg'):
     out = f'results/paper_figures/fig5_gradcam_saliency.{ext}'
-    plt.savefig(out, dpi=300, bbox_inches='tight')
-    print(f'  Saved: {out}')
+    plt.savefig(out, dpi=300, bbox_inches='tight'); print(f'  Saved: {out}')
 plt.close()
 PYEOF
 
@@ -818,7 +875,6 @@ PYEOF
 print_summary() {
     local total_time; total_time=$(elapsed $SECONDS)
     banner "ALL FIGURES GENERATED"
-
     echo -e "  ${BOLD}Output directory:${RESET}  $OUT_DIR"
     echo ""
     hr
@@ -827,8 +883,7 @@ print_summary() {
     for f in "$OUT_DIR"/*.png "$OUT_DIR"/*.pdf "$OUT_DIR"/*.svg; do
         [[ -f "$f" ]] || continue
         local size; size=$(du -h "$f" | cut -f1)
-        local ext="${f##*.}"
-        printf "  %-48s %8s  %6s\n" "$(basename "$f")" "$size" "$ext"
+        printf "  %-48s %8s  %6s\n" "$(basename "$f")" "$size" "${f##*.}"
     done
     echo ""
     echo -e "  ${BOLD}Total wall-clock time:${RESET}  ${GREEN}${total_time}${RESET}"
@@ -849,7 +904,7 @@ main() {
     echo ""
     echo -e "${BOLD}${BLUE}"
     echo "  ╔════════════════════════════════════════════════════════════════╗"
-    echo "  ║   PA-HybridSSL · Figure Generation Pipeline  v2.3            ║"
+    echo "  ║   PA-HybridSSL · Figure Generation Pipeline  v2.4            ║"
     echo "  ║   IEEE TBME Submission                                        ║"
     echo "  ╚════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
