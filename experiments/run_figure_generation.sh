@@ -248,10 +248,7 @@ figure_reconstruction() {
             --checkpoint  "$PASSL_CKPT" \
             --data_csv    "$DATA_CSV"   \
             --output_dir  "$OUT_DIR"    \
-            --mask_ratio  0.60          \
-            --n_samples   6             \
-            --leads       "II V1 V5"    \
-            --seed        42
+            --mask_ratio  0.60
 
     ok "Outputs:"
     info "  $OUT_DIR/fig3_reconstruction_comparison.{png,pdf}"
