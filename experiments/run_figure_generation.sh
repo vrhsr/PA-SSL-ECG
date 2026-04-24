@@ -342,6 +342,13 @@ for col_i, (title, color, subtitle) in enumerate(COL_TITLES):
     # Underline rule
     ax_hdr.plot([0, 1], [0.0, 0.0], color=color, linewidth=1.8, alpha=0.6,
                 transform=ax_hdr.transAxes, clip_on=False)
+                
+    # Add Sample 1 label to the first column header so it doesn't overlap the line
+    if col_i == 0:
+        ax_hdr.text(0.01, 0.15, f'Sample 1  ·  {sample_lbl[0]}',
+                    transform=ax_hdr.transAxes,
+                    fontsize=8.5, fontweight='bold',
+                    color='#333333', va='center')
 
 for row_i, (sidx, slbl) in enumerate(zip(sample_idx, sample_lbl)):
     sig        = signals[sidx]
@@ -443,11 +450,6 @@ for row_i, (sidx, slbl) in enumerate(zip(sample_idx, sample_lbl)):
         # Axis labels
         if col_i == 0:
             ax.set_ylabel('Amplitude (mV)', fontsize=8, labelpad=3)
-            # Row label on first row (col title row handles row 0)
-            if row_i == 0:
-                ax.set_title(f'Sample 1  ·  {slbl}',
-                             fontsize=8.5, fontweight='bold',
-                             color='#333333', loc='left', pad=3)
 
         if row_i == N - 1:
             ax.set_xlabel('Time (ms)', fontsize=9, labelpad=3)
