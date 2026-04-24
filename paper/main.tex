@@ -169,6 +169,13 @@ Domain-specific augmentations have been explored in medical imaging~\cite{Chaita
 \section{Methodology}
 \label{sec:methodology}
 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/architecture_diagram.png}
+\caption{Overview of the PA-HybridSSL framework. An ECG beat is augmented via a library of eight physiology-aware augmentations that preserve QRS morphology (left). Both augmented views are encoded by a shared ResNet1D or WavKAN encoder. The hybrid loss combines a contrastive objective (NT-Xent) with a Physiology-Aware Masked Autoencoder (PA-MAE) loss that enforces QRS-avoidance masking (centre). The frozen encoder is subsequently evaluated on three downstream tasks: linear probe classification, classifier-free kNN transfer, and OOD anomaly detection (right).}
+\label{fig:architecture}
+\end{figure*}
+
 \subsection{Problem Formulation}
 
 Let $\mathcal{D} = \{x_i\}_{i=1}^{N}$ denote a dataset of $N$ unlabeled ECG beats, where each beat $x_i \in \mathbb{R}^{L}$ is a single-lead signal of length $L = 250$ samples (2.5 seconds at 100\,Hz), centered on the R-peak. Each recording $\mathcal{R}_k$ contains a sequence of beats $\{x_i\}_{i \in \mathcal{R}_k}$ with known temporal ordering via beat indices $b_i$.
@@ -177,6 +184,13 @@ Our goal is to learn an encoder $f_\theta: \mathbb{R}^{L} \rightarrow \mathbb{R}
 
 \subsection{Physiology-Aware Augmentation Library}
 \label{sec:augmentations}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/augmentation_visualization.png}
+\caption{The eight physiology-aware augmentations comprising the PA-HybridSSL augmentation library. Each transformation is applied with QRS-preservation constraints (red shaded region): augmentations that would distort the QRS complex are either excluded from the masked region (PA-MAE), applied with bounded parameters (warp, amplitude), or constrained to non-QRS segments (noise injection, lead dropout). Each individual augmentation achieves $>$0.95 morphology correlation (Pearson) with the original beat; the composite pipeline achieves $0.79\,\pm\,0.25$.}
+\label{fig:augmentations}
+\end{figure*}
 
 We define eight augmentation operators $\{\mathcal{A}_k\}_{k=1}^{8}$, each satisfying the following constraints:
 
@@ -401,7 +415,7 @@ SimCLR + Naive Aug & 0.810 & 0.807 & 0.886 & 0.923 & 0.823 & 0.821 & 0.899 & 0.9
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=\columnwidth]{figures/label_efficiency_chart.pdf}
+\includegraphics[width=\columnwidth]{label_efficiency_chart.pdf}
 \caption{Label efficiency: PA-HybridSSL AUROC vs.\ supervision fraction on PTB-XL (binary task), averaged over 3 seeds. PA-HybridSSL at 1\% labels outperforms SimCLR at 10\% labels.}
 \label{fig:label_eff}
 \end{figure}
@@ -505,7 +519,7 @@ SimCLR + Naive Aug        & $0.750 \pm 0.010$ & $0.753 \pm 0.009$ & $0.762 \pm 0
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/umap_pahybrid_final.png}
+\includegraphics[width=\textwidth]{umap_pahybrid_final.png}
 \caption{UMAP projection of PA-HybridSSL representations across all three datasets (4,998 samples). Left: dataset origin; the elongated green clusters correspond to MIT-BIH patient groups (48 patients, $\sim$2,250 beats each), confirming the encoder successfully learned patient-level temporal consistency. Right: diagnostic label; Normal and Abnormal beats exhibit distinct regional clustering despite no label access during pretraining.}
 \label{fig:umap}
 \end{figure*}
