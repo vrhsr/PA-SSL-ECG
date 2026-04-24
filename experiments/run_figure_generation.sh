@@ -340,8 +340,8 @@ for col_i, (title, color, subtitle) in enumerate(COL_TITLES):
                 fontsize=7.5, color='#666666', style='italic',
                 ha='center', va='center')
     # Underline rule
-    ax_hdr.axhline(0.0, color=color, linewidth=1.8, alpha=0.6,
-                   transform=ax_hdr.transAxes, clip_on=False)
+    ax_hdr.plot([0, 1], [0.0, 0.0], color=color, linewidth=1.8, alpha=0.6,
+                transform=ax_hdr.transAxes, clip_on=False)
 
 for row_i, (sidx, slbl) in enumerate(zip(sample_idx, sample_lbl)):
     sig        = signals[sidx]
@@ -799,8 +799,8 @@ for beat_i, (bidx, blabel, bdesc) in enumerate(BEATS):
                               edgecolor='none', alpha=0.88))
 
         # Separator line below header
-        ax_hdr.axhline(0.0, color=col_col, lw=0.8, alpha=0.4,
-                       transform=ax_hdr.transAxes, clip_on=False)
+        ax_hdr.plot([0, 1], [0.0, 0.0], color=col_col, lw=0.8, alpha=0.4,
+                    transform=ax_hdr.transAxes, clip_on=False)
 
         # ── Signal axis ───────────────────────────────────────────────────────
         ax = fig.add_subplot(gs[sig_row, col_i])
