@@ -391,6 +391,8 @@ for row_i, (sidx, slbl) in enumerate(zip(sample_idx, sample_lbl)):
         if row_i > 0:
             ax_hdr = fig.add_subplot(gs[hdr_gs_row, col_i])
             ax_hdr.set_axis_off()
+        else:
+            ax_hdr = fig.axes[col_i]
 
         # Row label in leftmost header of each row
         if col_i == 0 and row_i > 0:
@@ -401,11 +403,13 @@ for row_i, (sidx, slbl) in enumerate(zip(sample_idx, sample_lbl)):
                         color='#333333', va='center')
 
         # Metric badge in reconstruction headers
-        if metric_str and row_i > 0:
+        if metric_str:
             better = (pa_rmse < rand_rmse)
             badge_fc = COL_PA if (color == COL_PA and better) else \
                        COL_RAND if color == COL_RAND else 'none'
-            ax_hdr.text(0.98, 0.5, metric_str,
+            # For row 0, place the badge at y=0.15 so it aligns with the subtitle
+            y_pos = 0.15 if row_i == 0 else 0.5
+            ax_hdr.text(0.98, y_pos, metric_str,
                         transform=ax_hdr.transAxes,
                         fontsize=7.5, ha='right', va='center',
                         color='white',
