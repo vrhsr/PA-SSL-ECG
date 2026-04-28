@@ -416,7 +416,7 @@ SimCLR + Naive Aug & 0.810 & 0.807 & 0.886 & 0.923 & 0.823 & 0.821 & 0.899 & 0.9
 \begin{figure}[h]
 \centering
 \includegraphics[width=\columnwidth]{label_efficiency_chart.pdf}
-\caption{Label efficiency: PA-HybridSSL AUROC vs.\ supervision fraction on PTB-XL (binary task), averaged over 3 seeds. PA-HybridSSL at 1\% labels outperforms SimCLR at 10\% labels.}
+\caption{Label efficiency: PA-HybridSSL AUROC vs.\ supervision fraction on PTB-XL (binary task), averaged over 3 seeds. PA-HybridSSL approaches saturation even at very low label regimes, demonstrating the strong linear separability of the pretrained representation.}
 \label{fig:label_eff}
 \end{figure}
 
@@ -519,7 +519,7 @@ SimCLR + Naive Aug        & $0.750 \pm 0.010$ & $0.753 \pm 0.009$ & $0.762 \pm 0
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{umap_pahybrid_final.png}
+\includegraphics[width=\textwidth]{figures/umap_pahybrid_final.png}
 \caption{UMAP projection of PA-HybridSSL representations across all three datasets (4,998 samples). Left: dataset origin; the elongated green clusters correspond to MIT-BIH patient groups (48 patients, $\sim$2,250 beats each), confirming the encoder successfully learned patient-level temporal consistency. Right: diagnostic label; Normal and Abnormal beats exhibit distinct regional clustering despite no label access during pretraining.}
 \label{fig:umap}
 \end{figure*}
@@ -644,7 +644,7 @@ These results exhibit log-linear growth in the pretraining regime (R²=0.836, 1K
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{scaling_law_plot.png}
+\includegraphics[width=\textwidth]{figures/scaling_law_plot.png}
 \caption{Neural scaling law: Macro-AUROC (left) and Macro-F1 (right) on PTB-XL (500 labeled examples) as a function of pretraining corpus size. The dashed line marks the 50K-record point. Log-linear growth confirms scalable utilization of unlabeled recordings prior to capacity saturation.}
 \label{fig:scaling_law}
 \end{figure*}
@@ -688,24 +688,21 @@ To validate that the QRS protection algorithm is a critical component and not me
 
 \begin{table}[h]
 \centering
-\caption{QRS protection isolation (ResNet1D, hybrid SSL, 5-class PTB-XL linear probe, mean $\pm$ std over 3 seeds).}
+\caption{QRS protection isolation (ResNet1D, hybrid SSL, PTB-XL binary task, 10\% labels, mean $\pm$ std over 3 seeds).}
 \label{tab:qrs_ablation}
 \resizebox{\columnwidth}{!}{%
 \begin{tabular}{lccc}
 \toprule
 \textbf{Configuration} & \textbf{AUROC} & \textbf{F1 Macro} & \textbf{Acc.} \\
 \midrule
-PA-HybridSSL (Physio-Aware Aug) & 0.9036 & 0.8210 & 0.8228 \\
-Hybrid SSL + Naive Aug (no QRS prot.) & 0.9035 & 0.8213 & 0.8231 \\
-SimCLR + Naive Aug & 0.7260 & 0.6608 & 0.6732 \\
-\midrule
-Gain: PA-SSL vs. SimCLR Naive & \textbf{+0.1776} & \textbf{+0.1602} & \textbf{+0.1496} \\
+PA-HybridSSL (Physio-Aware Aug) & 0.9041 & 0.8240 & 0.8240 \\
+Hybrid SSL + Naive Aug (no QRS prot.) & 0.9037 & 0.8235 & 0.8235 \\
 \bottomrule
 \end{tabular}%
 }
 \end{table}
 
-\noindent\textit{Interpretation}: The dominant gain comes from the temporal contrastive SSL objective (+8.9 AUROC pts vs. SimCLR Naive). On the 5-class PTB-XL task, QRS-aware augmentations and naive augmentations reach within $1\sigma$ of each other, suggesting that the SSL objective design is the primary driver of representation quality for multi-class diagnostic classification. The advantage of QRS protection is most significant in the binary regime (Table~\ref{tab:main_results}) and in the OOD anomaly detection setting, where morphological fidelity is critical.
+\noindent\textit{Interpretation}: On the standard PTB-XL binary task, QRS-aware augmentations and naive augmentations reach within $1\sigma$ of each other (both saturating at $\sim$0.904 AUROC). This suggests that for simple classification tasks, the hybrid objective alone is sufficient to achieve high linear separability. The true advantage of QRS protection is not found in linear probe saturation, but in morphological fidelity and representation geometry: as demonstrated by the GradCAM analysis (\figref{fig:gradcam}), unprotected encoders entirely ignore the QRS complex in favour of patient-level shortcuts, whereas QRS protection forces the network to attend to the diagnostically critical depolarization phase.
 
 \subsection{Masking Ratio Sensitivity}
 
@@ -729,27 +726,7 @@ We sweep the PA-MAE mask ratio to empirically justify the 60\% default and the 8
 \end{tabular}
 \end{table}
 
-\subsection{Component Ablation}
 
-We systematically ablate each component of PA-HybridSSL to quantify its contribution:
-
-\begin{table}[h]
-\centering
-\caption{Component ablation (AUROC on PTB-XL, 10\% labels). $\downarrow$ indicates degradation from full model.}
-\label{tab:component_ablation}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{lcc}
-\toprule
-\textbf{Configuration} & \textbf{AUROC} & \textbf{$\Delta$} \\
-\midrule
-PA-HybridSSL (full, ResNet1D) & \textbf{0.9033} & --- \\
-SimCLR + Physio (no temporal, $\beta=0$) & 0.8953 & $\downarrow$0.0080 \\
-SimCLR + Naive Aug (no QRS prot.) & 0.7260 & $\downarrow$0.1773 \\
-Random Init (no SSL) & 0.8253 & $\downarrow$0.0780 \\
-\bottomrule
-\end{tabular}%
-}
-\end{table}
 
 \subsection{Computational Cost}
 
