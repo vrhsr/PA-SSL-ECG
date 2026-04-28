@@ -21,8 +21,9 @@ from pathlib import Path
 # ══════════════════════════════════════════════════════════════════════════════
 # 0 · Paths
 # ══════════════════════════════════════════════════════════════════════════════
-CSV_IN  = Path('E:/PhD/PA-SSL-ECG/remote/results/ablation_summary.csv')
-FIG_DIR = Path('E:/PhD/PA-SSL-ECG/paper/figures')
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+CSV_IN  = PROJECT_ROOT / 'remote' / 'results' / 'ablation_summary.csv'
+FIG_DIR = PROJECT_ROOT / 'paper' / 'figures'
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 STEM    = FIG_DIR / 'fig6_label_efficiency'
 
