@@ -236,20 +236,20 @@ if not pa_row.empty:
     gap_pp = (y_pa - SUPERVISED_100) * 100
 
     ax.annotate(
-        f"PA-HybridSSL at 1% labels:\nAUROC = {y_pa:.3f}  (+{gap_pp:.1f} pp\nvs. full supervision)",
+        f"1% labels: AUROC={y_pa:.3f}\n(+{gap_pp:.1f} pp vs. supervised)",
         xy=(1.0, y_pa),
-        xytext=(18, y_hi - 0.006),
+        xytext=(1.6, y_pa + 0.008),
         fontsize=8.2,
         color="#1A56A4",
-        ha="left", va="top",
+        ha="left", va="bottom",
         arrowprops=dict(
             arrowstyle="->",
             color="#1A56A4",
-            lw=1.1,
-            connectionstyle="arc3,rad=-0.25",
+            lw=1.0,
+            connectionstyle="arc3,rad=0.0",
         ),
         bbox=dict(
-            boxstyle="round,pad=0.40",
+            boxstyle="round,pad=0.35",
             facecolor="#EBF2FC",
             edgecolor="#1A56A4",
             linewidth=0.85,
