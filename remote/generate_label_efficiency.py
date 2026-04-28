@@ -18,12 +18,11 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 0 · Paths
 # ══════════════════════════════════════════════════════════════════════════════
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 CSV_CANDIDATES = [
     PROJECT_ROOT / "remote" / "results" / "ablation_summary.csv",
@@ -32,7 +31,7 @@ CSV_CANDIDATES = [
 ]
 CSV_IN = next((p for p in CSV_CANDIDATES if p.exists()), None)
 
-FIG_DIR = PROJECT_ROOT / "figures"
+FIG_DIR = PROJECT_ROOT / "paper" / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 STEM = FIG_DIR / "fig6_label_efficiency"
 
@@ -110,9 +109,9 @@ else:
     }
     agg = pd.DataFrame(_demo)
 
-print("\n── Aggregated label-efficiency table ─────────────────────────")
+print("\n-- Aggregated label-efficiency table -------------------------")
 print(agg.sort_values(["model", "pct"]).to_string(index=False))
-print("──────────────────────────────────────────────────────────────\n")
+print("--------------------------------------------------------------\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2 · Visual identity
@@ -185,12 +184,7 @@ fig.subplots_adjust(left=0.12, right=0.97, top=0.88, bottom=0.18)
 
 # ── 3a  Inset (low-label regime) ─────────────────────────────────────────────
 # Upper-left corner — well away from the legend (lower-right)
-ax_ins = inset_axes(
-    ax, width="36%", height="44%",
-    loc="upper left",
-    bbox_to_anchor=(0.01, 0, 1, 0.97),
-    bbox_transform=ax.transAxes,
-)
+ax_ins = ax.inset_axes([0.01, 0.53, 0.36, 0.44])
 ax_ins.set_xscale("log")
 ax_ins.set_xticks([1, 5, 10])
 ax_ins.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
@@ -385,7 +379,7 @@ fig.text(
 for ext in ("pdf", "png", "svg"):
     out = STEM.with_suffix(f".{ext}")
     plt.savefig(out, dpi=600, bbox_inches="tight", pad_inches=0.04)
-    print(f"Saved → {out}")
+    print(f"Saved -> {out}")
 
 plt.close()
 print("Done.")
