@@ -255,7 +255,7 @@ if not pa_row.empty:
     ax.annotate(
         f"1% labels: AUROC {y_pa:.3f}\n(+{gap_pp:.1f} pp vs. supervised)",
         xy=(1.0, y_pa),                       # tip: exactly the 1% blue circle
-        xytext=(12, 0.9065),                  # box: upper-right open space
+        xytext=(1.35, y_pa - 0.011),          # box: just below-right, stays near point
         fontsize=8.2,
         color="#1A56A4",
         ha="left", va="top",
@@ -263,7 +263,7 @@ if not pa_row.empty:
             arrowstyle="->",
             color="#1A56A4",
             lw=1.0,
-            connectionstyle="arc3,rad=0.30",
+            connectionstyle="arc3,rad=0.0",   # straight — cannot be confused for data
         ),
         bbox=dict(
             boxstyle="round,pad=0.35",
