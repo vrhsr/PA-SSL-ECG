@@ -319,7 +319,7 @@ fig.text(
 for ext in ('pdf', 'png', 'svg'):
     out = STEM.with_suffix(f'.{ext}')
     plt.savefig(out, dpi=300, bbox_inches='tight')
-    print(f'  Saved → {out}')
+    print(f'  Saved -> {out}')
 
 plt.close()
 print('Done.')
