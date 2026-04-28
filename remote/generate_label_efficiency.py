@@ -177,31 +177,15 @@ plt.rcParams.update({
 })
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3 · Build figure
+# 3 · Build figure  (single clean axes, no inset)
 # ══════════════════════════════════════════════════════════════════════════════
 fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
-fig.subplots_adjust(left=0.12, right=0.97, top=0.88, bottom=0.18)
-
-# ── 3a  Inset (low-label regime) ─────────────────────────────────────────────
-# Upper-left corner — well away from the legend (lower-right)
-ax_ins = ax.inset_axes([0.01, 0.53, 0.36, 0.44])
-ax_ins.set_xscale("log")
-ax_ins.set_xticks([1, 5, 10])
-ax_ins.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
-ax_ins.tick_params(labelsize=7.5, direction="in", which="both",
-                   pad=2, length=2.5)
-ax_ins.grid(True, linestyle="--", linewidth=0.4, alpha=0.35)
-ax_ins.set_title("Low-label regime (1–10 %)", fontsize=7.5,
-                 fontweight="bold", pad=3)
-for sp in ("top", "right"):
-    ax_ins.spines[sp].set_visible(False)
-ax_ins.spines["left"].set_linewidth(0.7)
-ax_ins.spines["bottom"].set_linewidth(0.7)
+fig.subplots_adjust(left=0.13, right=0.97, top=0.88, bottom=0.18)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 4 · Draw curves
 # ══════════════════════════════════════════════════════════════════════════════
-ins_y_lo, ins_y_hi = [], []
+all_y_lo, all_y_hi = [], []
 
 for model_name in MODEL_ORDER:
     sty = STYLE[model_name]
@@ -213,85 +197,56 @@ for model_name in MODEL_ORDER:
     x   = sub["pct"].values.astype(float)
     y   = sub["mu"].values
     err = sub["sd"].values
+    all_y_lo.append((y - err).min())
+    all_y_hi.append((y + err).max())
 
-    ekw = dict(fmt="none", ecolor=sty["color"],
-               elinewidth=0.95, capsize=3.5, capthick=0.95,
-               zorder=sty["zorder"] + 1)
-
-    # -- main axes --
-    ax.plot(x, y, color=sty["color"], marker=sty["marker"],
+    ax.plot(x, y,
+            color=sty["color"], marker=sty["marker"],
             markersize=sty["ms"], linewidth=sty["lw"],
             linestyle=sty["ls"], zorder=sty["zorder"],
             label=model_name, clip_on=False)
+
     ax.fill_between(x,
                     np.clip(y - err, 0, 1),
                     np.clip(y + err, 0, 1),
                     color=sty["color"], alpha=sty["band_alpha"],
                     zorder=sty["zorder"] - 1)
-    ax.errorbar(x, y, yerr=err, **ekw)
 
-    # -- inset: 1 %, 5 %, 10 % only --
-    mask = x <= 10.5
-    if mask.sum() > 1:
-        xi, yi, ei = x[mask], y[mask], err[mask]
-        ax_ins.plot(xi, yi, color=sty["color"], marker=sty["marker"],
-                    markersize=sty["ms"] - 1.0, linewidth=sty["lw"] - 0.3,
-                    linestyle=sty["ls"], zorder=sty["zorder"], clip_on=False)
-        ax_ins.fill_between(xi,
-                            np.clip(yi - ei, 0, 1),
-                            np.clip(yi + ei, 0, 1),
-                            color=sty["color"], alpha=sty["band_alpha"])
-        ax_ins.errorbar(xi, yi, yerr=ei,
-                        fmt="none", ecolor=sty["color"],
-                        elinewidth=0.8, capsize=3.0, capthick=0.8)
-        ins_y_lo.append((yi - ei).min())
-        ins_y_hi.append((yi + ei).max())
+    ax.errorbar(x, y, yerr=err,
+                fmt="none", ecolor=sty["color"],
+                elinewidth=0.95, capsize=3.5, capthick=0.95,
+                zorder=sty["zorder"] + 1)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 5 · Supervised baseline reference line
 # ══════════════════════════════════════════════════════════════════════════════
-_ref_kw = dict(color="#555555", lw=1.1, ls=(0, (5, 4)), alpha=0.80, zorder=2)
-ax.axhline(SUPERVISED_100, **_ref_kw)
-ax_ins.axhline(SUPERVISED_100, **{**_ref_kw, "lw": 0.85})
+ax.axhline(SUPERVISED_100,
+           color="#555555", lw=1.1, ls=(0, (5, 4)), alpha=0.80, zorder=2)
 
-# Label the reference line just inside the left spine
-all_y  = agg["mu"].values
-y_lo   = max(0.0, all_y.min() - 0.012)
-y_hi   = min(1.0, all_y.max() + 0.010)
-y_span = y_hi - y_lo
-
-ax.text(
-    0.01, SUPERVISED_100 + 0.0006 * (y_span / 0.06),
-    f"Supervised 100 % = {SUPERVISED_100:.3f}",
-    transform=ax.get_yaxis_transform(),
-    fontsize=7.5, color="#444444",
-    ha="left", va="bottom", style="italic",
-    bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
-              edgecolor="none", alpha=0.80),
-    zorder=12,
-)
+# Y limits with breathing room
+y_lo = max(0.0, min(all_y_lo + [SUPERVISED_100]) - 0.006)
+y_hi = min(1.0, max(all_y_hi) + 0.008)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 6 · Headline annotation (1 % result)
+# 6 · Headline annotation (1 % result)  — placed cleanly in upper-right gap
 # ══════════════════════════════════════════════════════════════════════════════
 pa_row = agg[(agg["model"] == "PA-HybridSSL (Ours)") & (agg["pct"] == 1)]
 if not pa_row.empty:
-    y_pa    = float(pa_row["mu"].iloc[0])
-    gap_pp  = (y_pa - SUPERVISED_100) * 100
+    y_pa   = float(pa_row["mu"].iloc[0])
+    gap_pp = (y_pa - SUPERVISED_100) * 100
 
-    # Anchor text in upper-right quadrant, clear of inset and legend
     ax.annotate(
-        f"With only 1 % labels:\nAUROC = {y_pa:.3f}  (+{gap_pp:.1f} pp\nvs. full supervision)",
+        f"PA-HybridSSL at 1% labels:\nAUROC = {y_pa:.3f}  (+{gap_pp:.1f} pp\nvs. full supervision)",
         xy=(1.0, y_pa),
-        xytext=(14, y_lo + 0.72 * y_span),
-        fontsize=8.0,
+        xytext=(18, y_hi - 0.006),
+        fontsize=8.2,
         color="#1A56A4",
-        ha="left", va="center",
+        ha="left", va="top",
         arrowprops=dict(
             arrowstyle="->",
             color="#1A56A4",
             lw=1.1,
-            connectionstyle="arc3,rad=0.22",
+            connectionstyle="arc3,rad=-0.25",
         ),
         bbox=dict(
             boxstyle="round,pad=0.40",
@@ -304,7 +259,7 @@ if not pa_row.empty:
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 7 · Main axes formatting
+# 7 · Axes formatting
 # ══════════════════════════════════════════════════════════════════════════════
 ax.set_xscale("log")
 ax.set_xticks([1, 5, 10, 100])
@@ -318,31 +273,15 @@ ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(2))
 ax.set_xlabel("Labeled Data Fraction (%)", labelpad=6)
 ax.set_ylabel("AUROC  (PTB-XL, binary arrhythmia)", labelpad=6)
 
-# ── Inset y-range: tight around data + baseline ──────────────────────────────
-if ins_y_lo and ins_y_hi:
-    ilo = min(min(ins_y_lo), SUPERVISED_100) - 0.004
-    ihi = max(max(ins_y_hi), SUPERVISED_100) + 0.004
-    ax_ins.set_ylim(ilo, ihi)
-    ax_ins.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.3f"))
-    ax_ins.yaxis.set_major_locator(mticker.MaxNLocator(nbins=4, prune="both"))
-
-# ── Inset zoom connector ──────────────────────────────────────────────────────
-# mark_inset draws the rectangle on ax showing the zoomed region
-# We manually set the x-range on ax_ins first so the box is accurate
-ax_ins.set_xlim(0.80, 12)
-
-# Highlight the zoomed region with a subtle shaded rectangle on the main axes
-# (avoids messy connector lines from mark_inset crossing the curves)
-ax.axvspan(0.78, 12, alpha=0.04, color="#777777", zorder=0)
-ax.axvline(12, color="#aaaaaa", lw=0.75, ls=":", alpha=0.6, zorder=1)
-
 # ══════════════════════════════════════════════════════════════════════════════
-# 8 · Legend (below inset on right, or lower-center)
+# 8 · Legend  — include supervised reference line entry
 # ══════════════════════════════════════════════════════════════════════════════
 handles, labels = ax.get_legend_handles_labels()
-ref_handle = Line2D([0], [0], color="#555555", lw=1.1,
-                    ls=(0, (5, 4)), alpha=0.80,
-                    label=f"Supervised 100 % (scratch) = {SUPERVISED_100:.3f}")
+ref_handle = Line2D(
+    [0], [0], color="#555555", lw=1.1,
+    ls=(0, (5, 4)), alpha=0.80,
+    label=f"Supervised 100% (scratch) = {SUPERVISED_100:.3f}"
+)
 handles.append(ref_handle)
 labels.append(ref_handle.get_label())
 
@@ -364,10 +303,10 @@ ax.set_title(
 )
 
 fig.text(
-    0.5, 0.035,
+    0.5, 0.028,
     (
-        "Shaded bands and error bars = ±1 std over 3 seeds.  "
-        "Dashed line = fully supervised ResNet1D trained on 100 % labels (Table I).  "
+        "Shaded bands and error bars = +/-1 std over 3 seeds.  "
+        "Dashed line = fully supervised ResNet1D at 100% labels (Table I).  "
         "X-axis is log-scaled."
     ),
     ha="center", fontsize=7.5, color="#555555", style="italic",
