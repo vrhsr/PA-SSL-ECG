@@ -217,15 +217,32 @@ for model_name in MODEL_ORDER:
                 elinewidth=0.95, capsize=3.5, capthick=0.95,
                 zorder=sty["zorder"] + 1)
 
+# Value labels at 100% endpoint — prevents ambiguity where lines converge
+_label_offsets = {
+    "PA-HybridSSL (Ours)":       +0.0010,   # nudge above
+    "SimCLR (Contrastive only)": -0.0012,   # nudge below
+}
+for model_name in ["PA-HybridSSL (Ours)", "SimCLR (Contrastive only)"]:
+    sty  = STYLE[model_name]
+    row  = agg[(agg["model"] == model_name) & (agg["pct"] == 100)]
+    if row.empty:
+        continue
+    y100 = float(row["mu"].iloc[0])
+    voff = _label_offsets.get(model_name, 0)
+    ax.text(103, y100 + voff,
+            f"{y100:.3f}",
+            fontsize=7.5, color=sty["color"],
+            ha="left", va="center", fontweight="bold", zorder=8)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 5 · Supervised baseline reference line
 # ══════════════════════════════════════════════════════════════════════════════
 ax.axhline(SUPERVISED_100,
            color="#555555", lw=1.1, ls=(0, (5, 4)), alpha=0.80, zorder=2)
 
-# Y limits with breathing room
-y_lo = max(0.0, min(all_y_lo + [SUPERVISED_100]) - 0.006)
-y_hi = min(1.0, max(all_y_hi) + 0.008)
+# Y limits — tight: just enough room for baseline + minor whitespace
+y_lo = max(0.0, min(all_y_lo + [SUPERVISED_100]) - 0.002)
+y_hi = min(1.0, max(all_y_hi) + 0.010)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 6 · Headline annotation (1 % result)  — placed cleanly in upper-right gap
@@ -236,17 +253,17 @@ if not pa_row.empty:
     gap_pp = (y_pa - SUPERVISED_100) * 100
 
     ax.annotate(
-        f"1% labels: AUROC={y_pa:.3f}\n(+{gap_pp:.1f} pp vs. supervised)",
-        xy=(1.0, y_pa),
-        xytext=(1.6, y_pa + 0.008),
+        f"1% labels: AUROC {y_pa:.3f}\n(+{gap_pp:.1f} pp vs. supervised)",
+        xy=(1.0, y_pa),                       # tip: exactly the 1% blue circle
+        xytext=(12, 0.9065),                  # box: upper-right open space
         fontsize=8.2,
         color="#1A56A4",
-        ha="left", va="bottom",
+        ha="left", va="top",
         arrowprops=dict(
             arrowstyle="->",
             color="#1A56A4",
             lw=1.0,
-            connectionstyle="arc3,rad=0.0",
+            connectionstyle="arc3,rad=0.30",
         ),
         bbox=dict(
             boxstyle="round,pad=0.35",
